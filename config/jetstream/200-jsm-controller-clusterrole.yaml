@@ -1,0 +1,82 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jetstream-ch-controller
+rules:
+  # get/list/watch to trigger reconciles, and update for adding subscribers
+  - apiGroups:
+      - messaging.knative.dev
+    resources:
+      - natsjetstreamchannels
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+  # update status and finalizers
+  - apiGroups:
+      - messaging.knative.dev
+    resources:
+      - natsjetstreamchannels/status
+      - natsjetstreamchannels/finalizers
+    verbs:
+      - update
+  # list and watch all deployments
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - rolebindings
+    verbs:
+      - create
+      - get
+      - list
+      - watch
+      - update
+  # required to log events
+  - apiGroups:
+      - ""
+    resources:
+      - "events"
+    verbs:
+      - create
+      - patch
+      - update

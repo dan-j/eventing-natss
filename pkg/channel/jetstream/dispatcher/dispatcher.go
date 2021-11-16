@@ -1,0 +1,275 @@
+package dispatcher
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	cejs "github.com/cloudevents/sdk-go/protocol/nats_jetstream/v2"
+	"github.com/cloudevents/sdk-go/v2/binding"
+	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
+	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	commonce "knative.dev/eventing-natss/pkg/common/cloudevents"
+	commonerr "knative.dev/eventing-natss/pkg/common/error"
+	nethttp "net/http"
+	"sync"
+
+	eventingchannels "knative.dev/eventing/pkg/channel"
+	"knative.dev/pkg/kmeta"
+	"knative.dev/pkg/logging"
+)
+
+// Dispatcher is responsible for managing both directions of events over the NatsJetStreamChannel. It manages the
+// lifecycle of the following components:
+// - Stream per NatsJetStreamChannel
+// - HTTP receiver which publishes to the desired Stream
+// - Consumer per .spec.subscribers[] of a channel, forwarding events to the specified subscriber address.
+type Dispatcher struct {
+	receiver   *eventingchannels.MessageReceiver
+	dispatcher *eventingchannels.MessageDispatcherImpl
+	reporter   eventingchannels.StatsReporter
+
+	js nats.JetStreamContext
+
+	subjectFunc      SubjectFunc
+	consumerNameFunc ConsumerNameFunc
+
+	// hostToChannelMap represents a map[string]eventingchannels.ChannelReference
+	hostToChannelMap sync.Map
+
+	consumerUpdateLock sync.Mutex
+	channelSubscribers map[types.NamespacedName]sets.String
+	consumers          map[types.UID]*Consumer
+}
+
+func NewDispatcher(ctx context.Context, args NatsDispatcherArgs) (*Dispatcher, error) {
+	logger := logging.FromContext(ctx)
+
+	reporter := eventingchannels.NewStatsReporter(args.ContainerName, kmeta.ChildName(args.PodName, uuid.New().String()))
+
+	d := &Dispatcher{
+		dispatcher:         eventingchannels.NewMessageDispatcher(logger.Desugar()),
+		reporter:           reporter,
+		js:                 args.JetStream,
+		subjectFunc:        args.SubjectFunc,
+		consumerNameFunc:   args.ConsumerNameFunc,
+		channelSubscribers: make(map[types.NamespacedName]sets.String),
+		consumers:          make(map[types.UID]*Consumer),
+	}
+
+	receiverFunc, err := eventingchannels.NewMessageReceiver(
+		d.messageReceiver,
+		logger.Desugar(),
+		reporter,
+		eventingchannels.ResolveMessageChannelFromHostHeader(d.getChannelReferenceFromHost),
+	)
+	if err != nil {
+		logger.Error("failed to create message receiver")
+		return nil, err
+	}
+
+	d.receiver = receiverFunc
+
+	return d, nil
+}
+
+func (d *Dispatcher) Start(ctx context.Context) error {
+	if d.receiver == nil {
+		return fmt.Errorf("message receiver not set")
+	}
+
+	return d.receiver.Start(ctx)
+}
+
+// RegisterChannelHost registers the Dispatcher to accept HTTP events matching the specified HostName
+func (d *Dispatcher) RegisterChannelHost(config ChannelConfig) error {
+	if old, ok := d.hostToChannelMap.LoadOrStore(config.HostName, config.ChannelReference); ok {
+		// map already contained a channel reference for this hostname, check they both reference the same channel,
+		// we only care about the Name/Namespace pair matching, since stream name is immutable.
+		if old != config.ChannelReference {
+			// if something is already there, but it's not the same channel, then fail
+			return fmt.Errorf(
+				"duplicate hostName found. Each channel must have a unique host header. HostName:%s, channel:%s.%s, channel:%s.%s",
+				config.HostName,
+				old.(eventingchannels.ChannelReference).Namespace,
+				old.(eventingchannels.ChannelReference).Name,
+				config.Namespace,
+				config.Name,
+			)
+		}
+	}
+
+	return nil
+}
+
+func (d *Dispatcher) ReconcileConsumers(ctx context.Context, config ChannelConfig, isLeader bool) error {
+	logger := logging.FromContext(ctx).With(zap.Bool("is_leader", isLeader))
+	channelNamespacedName := types.NamespacedName{
+		Namespace: config.Namespace,
+		Name:      config.Name,
+	}
+
+	d.consumerUpdateLock.Lock()
+	defer d.consumerUpdateLock.Unlock()
+
+	currentSubs, ok := d.channelSubscribers[channelNamespacedName]
+	if !ok {
+		currentSubs = sets.NewString()
+	}
+	expectedSubs := sets.NewString(config.SubscriptionsUIDs()...)
+
+	toAddSubs := expectedSubs.Difference(currentSubs)
+	toRemoveSubs := currentSubs.Difference(expectedSubs)
+
+	nextSubs := sets.NewString()
+	var subErrs commonerr.SubscriberErrors
+	for _, sub := range config.Subscriptions {
+
+		uid := string(sub.UID)
+		subLogger := logger.With(zap.String("sub_uid", uid))
+
+		var (
+			status SubscriberStatusType
+			err    error
+		)
+
+		switch {
+		case toAddSubs.Has(uid):
+			subLogger.Debugw("subscription not configured for dispatcher, subscribing")
+			status, err = d.subscribe(logging.WithLogger(ctx, subLogger), config, sub, isLeader)
+		case toRemoveSubs.Has(uid):
+			subLogger.Debugw("extraneous subscription configured for dispatcher, unsubscribing")
+			err = d.unsubscribe(sub)
+			status = SubscriberStatusTypeDeleted
+		default:
+			subLogger.Debugw("subscription already up to date")
+			status = SubscriberStatusTypeUpToDate
+		}
+
+		switch status {
+		case SubscriberStatusTypeCreated, SubscriberStatusTypeUpToDate:
+			nextSubs.Insert(uid)
+		case SubscriberStatusTypeSkipped, SubscriberStatusTypeError, SubscriberStatusTypeDeleted:
+			nextSubs.Delete(uid)
+		}
+
+		if err != nil {
+			subErrs.AddError(uid, err)
+		}
+	}
+
+	d.channelSubscribers[channelNamespacedName] = nextSubs
+
+	// subErrs used to be a *SubscriberErrors but the return type is always non-nil since the interface type on the
+	// return isn't the same as the type of subErrs: https://yourbasic.org/golang/gotcha-why-nil-error-not-equal-nil/
+	if len(subErrs) > 0 {
+		return subErrs
+	}
+
+	return nil
+}
+
+func (d *Dispatcher) subscribe(ctx context.Context, config ChannelConfig, sub Subscription, isLeader bool) (SubscriberStatusType, error) {
+	logger := logging.FromContext(ctx)
+
+	info, err := d.getOrEnsureConsumer(ctx, config, sub, isLeader)
+	if err != nil {
+		if err == nats.ErrConsumerNotFound {
+			logger.Infow("dispatcher not leader and consumer does not exist yet")
+			return SubscriberStatusTypeSkipped, nil
+		}
+
+		logger.Errorw("failed to get *ConsumerInfo during subscribe")
+		return SubscriberStatusTypeError, err
+	}
+
+	consumer := &Consumer{
+		sub:              sub,
+		dispatcher:       d.dispatcher,
+		reporter:         d.reporter,
+		channelNamespace: config.Namespace,
+		logger:           logger,
+		ctx:              ctx,
+	}
+
+	consumer.jsSub, err = d.js.QueueSubscribe("", info.Name, consumer.MsgHandler, nats.Bind(info.Stream, info.Name))
+	if err != nil {
+		logger.Errorw("failed to create queue subscription for consumer")
+		return SubscriberStatusTypeError, err
+	}
+
+	d.consumers[sub.UID] = consumer
+
+	return 0, nil
+}
+
+func (d *Dispatcher) unsubscribe(sub Subscription) error {
+	consumer, ok := d.consumers[sub.UID]
+	if !ok {
+		return fmt.Errorf("unable to unsubscribe, *Consumer is not present in consumers map for UID: %s", string(sub.UID))
+	}
+
+	delete(d.consumers, sub.UID)
+
+	return consumer.Close()
+}
+
+// getOrEnsureConsumer obtains the current ConsumerInfo for this Subscription, updating/creating one if the dispatcher
+// is a leader.
+func (d *Dispatcher) getOrEnsureConsumer(ctx context.Context, config ChannelConfig, sub Subscription, isLeader bool) (*nats.ConsumerInfo, error) {
+	logger := logging.FromContext(ctx)
+
+	consumerName := d.consumerNameFunc(string(sub.UID))
+
+	if isLeader {
+		// AddConsumer is idempotent so this will either create the consumer, update to match expected config, or no-op
+		info, err := d.js.AddConsumer(config.StreamName, buildConsumerConfig(consumerName, config.ConsumerConfigTemplate))
+		if err != nil {
+			logger.Errorw("failed to add consumer")
+			return nil, err
+		}
+
+		return info, nil
+	}
+
+	// dispatcher isn't leader, try and retrieve an existing consumer
+	return d.js.ConsumerInfo(config.StreamName, consumerName)
+}
+
+func (d *Dispatcher) messageReceiver(ctx context.Context, ch eventingchannels.ChannelReference, message binding.Message, transformers []binding.Transformer, _ nethttp.Header) error {
+	logger := logging.FromContext(ctx)
+	logger.Debugw("received message from HTTP receiver")
+
+	eventID := commonce.IDExtractorTransformer("")
+
+	writer := new(bytes.Buffer)
+	if err := cejs.WriteMsg(ctx, message, writer, append(transformers, &eventID)...); err != nil {
+		logger.Error("failed to write binding.Message to bytes.Buffer")
+		return err
+	}
+
+	subject := d.subjectFunc(ch.Namespace, ch.Name)
+	logger = logger.With(zap.String("msg_id", string(eventID)))
+	logger.Debugw("parsed message into JetStream encoding, publishing to subject", zap.String("subj", subject))
+
+	// publish the message, passing the cloudevents ID as the MsgId so that we can benefit from detecting duplicate
+	// messages
+	_, err := d.js.Publish(subject, writer.Bytes(), nats.MsgId(string(eventID)))
+	if err != nil {
+		logger.Errorw("failed to publish message", zap.Error(err))
+		return err
+	}
+
+	logger.Debugw("successfully published message to JetStream")
+	return nil
+}
+
+func (d *Dispatcher) getChannelReferenceFromHost(host string) (eventingchannels.ChannelReference, error) {
+	cr, ok := d.hostToChannelMap.Load(host)
+	if !ok {
+		return eventingchannels.ChannelReference{}, eventingchannels.UnknownHostError(host)
+	}
+	return cr.(eventingchannels.ChannelReference), nil
+}

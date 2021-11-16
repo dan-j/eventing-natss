@@ -30,7 +30,7 @@ The controller dispatcher configuration tells the controller how dispatchers sho
 for the dispatcher itself. This is implemented as a `ConfigMap` which is volume-mounted into the controller pod and must
 contain a file `jetstream-dispatcher-config`.
 
-In the below example, you may already have a `ConfigMap` named `config-jetstream` in `my-namespace` which serves another
+In the below example, you may already have a `ConfigMap` named `config-nats` in `my-namespace` which serves another
 purpose, in these circumstances you can tell the controller to use a different `ConfigMap` when creating a dispatcher in
 that namespace.
 
@@ -43,7 +43,7 @@ metadata:
 data:
     jetstream-dispatcher-config: |
         clusterDefault:
-            configName: config-jetstream
+            configName: config-nats
         namespaceDefaults:
             my-namespace:
                 configName: custom-jetstream-config     # for dispatchers in the namespace, "my-namespace", use the 
@@ -69,7 +69,7 @@ The dispatcher has 3 roles:
 
 #### Dispatcher configuration
 
-The dispatcher is configured by a `ConfigMap` which should contain a file in yaml format called `eventing-jetstream`.
+The dispatcher is configured by a `ConfigMap` which should contain a file in yaml format called `eventing-nats`.
 This config map is mounted as a volume by the controller when it creates the dispatcher. Which config map is mounted is
 configurable by the [Controller Dispatcher Configuration](#Controller Dispatcher Configuration) documented above.
 
@@ -79,10 +79,10 @@ This config map should follow the shape outlined below:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-    name: config-jetstream
+    name: config-nats
     namespace: knative-eventing
 data:
-    eventing-jetstream: |
+    eventing-nats: |
         url: ""                         # the URL to the JetStream-enabled NATS server
         auth:                           # only one of the following keys may be set (see "Future Functionality" below)
             credentialFile:             # details of the NATS credential file to use for authentication, initially only
@@ -163,7 +163,6 @@ spec:
                                     # the data to create
             noAck: false            # defaults to false (i.e. ack enabled), not sure if we should allow users to 
                                     # configure this?
-            template: ""            # the stream template to base this stream configuration from
             duplicateWindow: ""     # time.Duration for duplication tracking
             placement:
                 cluster: ""         # place the stream on a specific cluster

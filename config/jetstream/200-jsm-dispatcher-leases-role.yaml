@@ -1,0 +1,20 @@
+# This Role is to grant the dispatcher ServiceAccount any necessary permissions within the knative-eventing namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jetstream-ch-dispatcher-leases
+  namespace: knative-eventing
+rules:
+  # required for leader election in case of multiple controller replicas
+  - apiGroups:
+      - "coordination.k8s.io"
+    resources:
+      - "leases"
+    verbs:
+      - get
+      - list
+      - create
+      - update
+      - delete
+      - patch
+      - watch
