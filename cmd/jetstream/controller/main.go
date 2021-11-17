@@ -17,7 +17,6 @@ limitations under the License.
 package main
 
 import (
-	"flag"
 	jsmcontroller "knative.dev/eventing-natss/pkg/channel/jetstream/controller"
 	"os"
 
@@ -29,7 +28,6 @@ import (
 const component = "jetstream-channel-controller"
 
 func main() {
-	flag.Parse()
 	ctx := signals.NewContext()
 	ns := os.Getenv("NAMESPACE")
 	if ns != "" {
