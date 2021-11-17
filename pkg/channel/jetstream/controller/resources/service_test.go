@@ -19,6 +19,7 @@ package resources
 import (
 	"errors"
 	"fmt"
+	"knative.dev/eventing-natss/pkg/channel/jetstream"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -113,7 +114,7 @@ func TestMakeServiceWithExternal(t *testing.T) {
 		},
 	}
 
-	got, err := MakeK8sService(imc, ExternalService(dispatcherNS, dispatcherName))
+	got, err := MakeK8sService(imc, ExternalService(dispatcherNS, jetstream.DispatcherName))
 	if err != nil {
 		t.Fatalf("Failed to create new service: %s", err)
 	}
