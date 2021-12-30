@@ -11,14 +11,17 @@ require (
 	github.com/influxdata/tdigest v0.0.1 // indirect
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/nats-io/nats.go v1.11.1-0.20210623165838-4b75fc59ae30
+	github.com/nats-io/nkeys v0.3.0
 	github.com/nats-io/stan.go v0.9.0
 	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.19.1
 	k8s.io/api v0.22.5
 	k8s.io/apimachinery v0.22.5
 	k8s.io/client-go v0.22.5
+	k8s.io/utils v0.0.0-20211208161948-7d6a63dca704
 	knative.dev/eventing v0.29.0
 	knative.dev/hack v0.0.0-20220118141833-9b2ed8471e30
+	knative.dev/hack/schema v0.0.0-20220118141833-9b2ed8471e30
 	knative.dev/pkg v0.0.0-20220118160532-77555ea48cd4
 	knative.dev/reconciler-test v0.0.0-20220118183433-c8bfbe66bada
 )
