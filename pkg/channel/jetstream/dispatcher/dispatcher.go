@@ -193,11 +193,12 @@ func (d *Dispatcher) subscribe(ctx context.Context, config ChannelConfig, sub Su
 	info, err := d.getOrEnsureConsumer(ctx, config, sub, isLeader)
 	if err != nil {
 		if err == nats.ErrConsumerNotFound {
+			// this error can only occur if the dispatcher is not the leader
 			logger.Infow("dispatcher not leader and consumer does not exist yet")
 			return SubscriberStatusTypeSkipped, nil
 		}
 
-		logger.Errorw("failed to get *ConsumerInfo during subscribe")
+		logger.Errorw("failed to getOrEnsureConsumer during subscribe")
 		return SubscriberStatusTypeError, err
 	}
 
@@ -224,7 +225,10 @@ func (d *Dispatcher) subscribe(ctx context.Context, config ChannelConfig, sub Su
 func (d *Dispatcher) unsubscribe(sub Subscription) error {
 	consumer, ok := d.consumers[sub.UID]
 	if !ok {
-		return fmt.Errorf("unable to unsubscribe, *Consumer is not present in consumers map for UID: %s", string(sub.UID))
+		return fmt.Errorf(
+			"unable to unsubscribe, Consumer is not present in consumers map for UID: %s",
+			string(sub.UID),
+		)
 	}
 
 	delete(d.consumers, sub.UID)

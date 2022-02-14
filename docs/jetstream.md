@@ -124,9 +124,8 @@ The dispatcher will support the following security features:
 
 - Unsecured NATS clusters (i.e. for usage within private networks)
 - Secured NATS clusters with a Credentials File (https://docs.nats.io/developing-with-nats/security/creds)
-    - Globally-scoped credentials by a ConfigMap/Secret in the `knative-eventing` namespace
-    - Namespace-scoped credentials by a ConfigMap/Secret in the same namespace as the `NatsJetStreamChannel`
-    - Channel-scoped credentials specified by a Secret and referenced in the `NatsJetStreamChannel` resource.
+  - It is the responsibility of the user to ensure a ConfigMap named `config-nats` exists in the namespace to which a 
+    dispatcher is being deployed in.
 - TLS-enabled clusters (https://docs.nats.io/developing-with-nats/security/tls)
     - CA should be defined in a ConfigMap/Secret in the `knative-eventing` namespace.
 

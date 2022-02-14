@@ -32,18 +32,14 @@ var (
 // with _.
 //
 // For example:
-// - "default/channel" => "DEFAULT__CHANNEL"
-// - "knative-eventing/my-channel" => "KNATIVE_EVENTING__MY_CHANNEL"
+// - "default/channel" => "KN_DEFAULT__CHANNEL"
+// - "knative-eventing/my-channel" => "KN_KNATIVE_EVENTING__MY_CHANNEL"
 func StreamName(nc *v1alpha1.NatsJetStreamChannel) string {
 	if nc.Spec.Stream.OverrideName != "" {
 		return nc.Spec.Stream.OverrideName
 	}
 
-	return strings.ToUpper(streamNameReplacer.Replace(fmt.Sprintf("%s__%s", nc.Namespace, nc.Name)))
-}
-
-func QueueName(streamName string) string {
-	return fmt.Sprintf("%s._knative", streamName)
+	return strings.ToUpper(streamNameReplacer.Replace(fmt.Sprintf("KN_%s__%s", nc.Namespace, nc.Name)))
 }
 
 func SubjectName(namespace, name string) string {

@@ -88,7 +88,8 @@ func newRoleBindingWarn(err error) reconciler.Event {
 	return reconciler.NewEvent(corev1.EventTypeWarning, dispatcherRoleBindingFailed, "Reconciling dispatcher RoleBinding failed: %s", err)
 }
 
-// Reconciler reconciles NATS JetStream Channels.
+// Reconciler is the controller reconciler which manages dispatcher deployments and other related manifests in response
+// to NATSJetStreamChannel resource changes.
 type Reconciler struct {
 	kubeClientSet kubernetes.Interface
 
@@ -109,8 +110,9 @@ var _ natssChannelReconciler.Interface = (*Reconciler)(nil)
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) reconciler.Event {
 	logger := logging.FromContext(ctx)
-	logger.Info("doing a thing")
 
+	// If the channel is not scoped then the dispatcher deployment and other resources are created in the system
+	// namespace, otherwise the namespace where the channel is located is used.
 	scope, ok := nc.Annotations[eventing.ScopeAnnotationKey]
 	if !ok {
 		scope = eventing.ScopeCluster
@@ -152,8 +154,8 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 		logger.Errorw("No endpoints found for Dispatcher service", zap.Error(err))
 		nc.Status.MarkEndpointsFailed("DispatcherEndpointsNotReady", "There are no endpoints ready for Dispatcher service")
 		return controller.NewRequeueAfter(10 * time.Second)
-		// return fmt.Errorf("there are no endpoints ready for Dispatcher service %s", jetstream.DispatcherName)
 	}
+
 	nc.Status.MarkEndpointsTrue()
 
 	// Reconcile the k8s service representing the actual Channel. It points to the Dispatcher service via ExternalName
@@ -201,13 +203,7 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, scope, dispatcherN
 		Image:               r.dispatcherImage,
 		Replicas:            1,
 		ServiceAccount:      r.dispatcherServiceAccount,
-		// TODO: what should these be?
-		// ConfigMapHash:         r.kafkaConfigMapHash,
-		OwnerRef: r.controllerRef,
-		// DeploymentAnnotations: r.kafkaConfig.EventingKafka.Channel.Dispatcher.DeploymentAnnotations,
-		// DeploymentLabels:      r.kafkaConfig.EventingKafka.Channel.Dispatcher.DeploymentLabels,
-		// PodAnnotations:        r.kafkaConfig.EventingKafka.Channel.Dispatcher.PodAnnotations,
-		// PodLabels:             r.kafkaConfig.EventingKafka.Channel.Dispatcher.PodLabels,
+		OwnerRef:            r.controllerRef,
 	}
 
 	want := resources.NewDispatcherDeploymentBuilder().WithArgs(&args).Build()
@@ -300,9 +296,6 @@ func (r *Reconciler) reconcileDispatcherService(ctx context.Context, dispatcherN
 
 	args := resources.DispatcherServiceArgs{
 		DispatcherNamespace: dispatcherNamespace,
-		// TODO: what should these be for JetStream?
-		// ServiceAnnotations:  r.kafkaConfig.EventingKafka.Channel.Dispatcher.ServiceAnnotations,
-		// ServiceLabels:       r.kafkaConfig.EventingKafka.Channel.Dispatcher.ServiceLabels,
 	}
 
 	want := resources.NewDispatcherServiceBuilder().WithArgs(&args).Build()
@@ -343,7 +336,7 @@ func (r *Reconciler) reconcileDispatcherService(ctx context.Context, dispatcherN
 
 func (r *Reconciler) reconcileChannelService(ctx context.Context, dispatcherNamespace string, nc *v1alpha1.NatsJetStreamChannel) (*corev1.Service, error) {
 	logger := logging.FromContext(ctx)
-	// Get the  Service and propagate the status to the Channel in case it does not exist.
+	// Get the Service and propagate the status to the Channel in case it does not exist.
 	// We don't do anything with the service because it's status contains nothing useful, so just do
 	// an existence check. Then below we check the endpoints targeting it.
 	// We may change this name later, so we have to ensure we use proper addressable when resolving these.

@@ -23,7 +23,7 @@ import (
 )
 
 // IDExtractorTransformer implements binding.Transformer. Upon the execution of the transformer, the underlying value
-// if updated to be event ID.
+// is updated to be event ID.
 type IDExtractorTransformer string
 
 func (a *IDExtractorTransformer) Transform(reader binding.MessageMetadataReader, _ binding.MessageMetadataWriter) error {

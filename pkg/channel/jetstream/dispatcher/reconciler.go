@@ -70,6 +70,10 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 	return r.syncChannel(ctx, nc, true)
 }
 
+// ObserveKind is invoked when a NatsJetStreamChannel requires reconciliation but the dispatcher is not the leader.
+// This will wait until the channel has been marked "ready" by the leader, then subscribe to the JSM stream to forward
+// to Knative subscriptions; this enables us to scale dispatchers horizontally to cope with large message volumes.
+// The only requirement to allow this to work is the use of Queue Subscribers.
 func (r *Reconciler) ObserveKind(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) pkgreconciler.Event {
 	logger := logging.FromContext(ctx)
 	logger.Debugw("ObserveKind for channel", zap.String("channel", nc.Name))
@@ -147,7 +151,7 @@ func (r *Reconciler) syncChannel(ctx context.Context, nc *v1alpha1.NatsJetStream
 				)
 			}
 
-			// don't let the controller report extra infomation due to subscriber error, just requeue in 10 seconds.
+			// don't let the controller report extra information due to subscriber error, just requeue in 10 seconds.
 			return controller.NewRequeueAfter(10 * time.Second)
 		}
 

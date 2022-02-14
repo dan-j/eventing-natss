@@ -35,7 +35,10 @@ const (
 	// common knative config (i.e. tracing)
 	KnativeConfigMapReaderClusterRole = "eventing-config-reader"
 
+	// DefaultNatsURL is derived from the installation documentation which defaults to this service name within the
+	// nats-io namespace.
 	DefaultNatsURL = "nats://nats.nats-io.svc.cluster.local"
 
+	// DefaultCredentialFileSecretKey is the key within the data section of the "Credentials File" Secret.
 	DefaultCredentialFileSecretKey = "nats.creds"
 )
