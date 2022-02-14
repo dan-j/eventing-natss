@@ -20,7 +20,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	v1 "k8s.io/client-go/listers/core/v1"
+	v1 "k8s.io/api/core/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/system"
 
@@ -39,9 +40,20 @@ func NewNatsConn(ctx context.Context, config commonconfig.EventingNatsConfig) (*
 		url = constants.DefaultNatsURL
 	}
 
+	ns := getNamespace(ctx)
 	var opts []nats.Option
+
 	if config.Auth != nil {
-		o, err := buildAuthOption(ctx, *config.Auth)
+		o, err := buildAuthOption(ctx, ns, *config.Auth)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, o...)
+	}
+
+	if config.RootCA != nil {
+		o, err := buildRootCAOption(ctx, ns, *config.RootCA)
 		if err != nil {
 			return nil, err
 		}
@@ -52,35 +64,83 @@ func NewNatsConn(ctx context.Context, config commonconfig.EventingNatsConfig) (*
 	return nats.Connect(url, opts...)
 }
 
-func buildAuthOption(ctx context.Context, config commonconfig.ENAuthConfig) (nats.Option, error) {
+func buildAuthOption(ctx context.Context, ns string, config commonconfig.ENConfigAuth) ([]nats.Option, error) {
+	opts := make([]nats.Option, 0, 2)
 	if config.CredentialFile != nil {
-		return buildCredentialFileOption(ctx, *config.CredentialFile)
-	}
-
-	return nil, nil
-}
-
-func buildCredentialFileOption(ctx context.Context, config commonconfig.ENCredentialFileConfig) (nats.Option, error) {
-	if config.Secret != nil {
-		ns := injection.GetNamespaceScope(ctx)
-		if ns == "" {
-			ns = system.Namespace()
-		}
-
-		secrets := secretinformer.Get(ctx).Lister().Secrets(ns)
-		contents, err := loadSecret(*config.Secret, secrets)
+		o, err := buildCredentialFileOption(ctx, ns, *config.CredentialFile)
 		if err != nil {
 			return nil, err
 		}
 
-		return credentialFileOption(contents), nil
+		opts = append(opts, o)
 	}
 
-	return nil, nil
+	if config.TLS != nil {
+		o, err := buildClientTLSOption(ctx, ns, *config.TLS)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, o)
+	}
+
+	return opts, nil
 }
 
-func loadSecret(config commonconfig.ENSecretConfig, secrets v1.SecretNamespaceLister) ([]byte, error) {
-	secret, err := secrets.Get(config.SecretName)
+func buildCredentialFileOption(ctx context.Context, ns string, config commonconfig.ENConfigAuthCredentialFile) (nats.Option, error) {
+	if config.Secret == nil {
+		return nil, nil
+	}
+
+	secrets := secretinformer.Get(ctx).Lister().Secrets(ns)
+	contents, err := loadSecret(*config.Secret, secrets)
+	if err != nil {
+		return nil, err
+	}
+
+	return credentialFileOption(contents), nil
+}
+
+func buildClientTLSOption(ctx context.Context, ns string, config commonconfig.ENConfigAuthTLS) (nats.Option, error) {
+	if config.Secret == nil {
+		return nil, nil
+	}
+
+	secret, err := secretinformer.Get(ctx).Lister().Secrets(ns).Get(config.Secret.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	return ClientCert(secret), nil
+}
+
+func buildRootCAOption(ctx context.Context, ns string, config commonconfig.ENConfigRootCA) (nats.Option, error) {
+	var (
+		decoded []byte
+		err     error
+	)
+	if config.CABundle != "" {
+		decoded, err = base64.StdEncoding.DecodeString(config.CABundle)
+		if err != nil {
+			return nil, err
+		}
+	} else if config.Secret != nil {
+		secret, err := secretinformer.Get(ctx).Lister().Secrets(ns).Get(config.Secret.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		var ok bool
+		if decoded, ok = secret.Data[TLSCaCertKey]; !ok {
+			return nil, ErrTLSCaCertMissing
+		}
+	}
+
+	return RootCA(decoded), nil
+}
+
+func loadSecret(config v1.SecretKeySelector, secrets corev1listers.SecretNamespaceLister) ([]byte, error) {
+	secret, err := secrets.Get(config.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -96,11 +156,12 @@ func loadSecret(config commonconfig.ENSecretConfig, secrets v1.SecretNamespaceLi
 	}
 
 	decoded := make([]byte, base64.StdEncoding.DecodedLen(len(encoded)))
-	if _, err = base64.StdEncoding.Decode(decoded, encoded); err != nil {
+	n, err := base64.StdEncoding.Decode(decoded, encoded)
+	if err != nil {
 		return nil, err
 	}
 
-	return decoded, nil
+	return decoded[:n], nil
 }
 
 // credentialFileOption processes the raw credential file contents and returns the nats.Option. This logic has been
@@ -123,4 +184,12 @@ func credentialFileOption(contents []byte) nats.Option {
 	}
 
 	return nats.UserJWT(userCB, sigCB)
+}
+
+func getNamespace(ctx context.Context) string {
+	if injection.HasNamespaceScope(ctx) {
+		return injection.GetNamespaceScope(ctx)
+	}
+
+	return system.Namespace()
 }
