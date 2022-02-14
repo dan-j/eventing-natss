@@ -1,4 +1,3 @@
-
 # NATS Streaming Channels
 
 NATS Streaming channels are beta-quality Channels that are backed by

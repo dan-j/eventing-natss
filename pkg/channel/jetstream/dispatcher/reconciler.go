@@ -18,6 +18,7 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
@@ -93,7 +94,7 @@ func (r *Reconciler) reconcileStream(ctx context.Context, nc *v1alpha1.NatsJetSt
 	primarySubject := r.dispatcher.subjectFunc(nc.Namespace, nc.Name)
 
 	existing, err := r.js.StreamInfo(streamName)
-	if err != nil && err != nats.ErrStreamNotFound {
+	if err != nil && !errors.Is(err, nats.ErrStreamNotFound) {
 		logger.Errorw("failed to check current stream info")
 		return err
 	}

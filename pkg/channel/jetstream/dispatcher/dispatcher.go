@@ -19,6 +19,7 @@ package dispatcher
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	cejs "github.com/cloudevents/sdk-go/protocol/nats_jetstream/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
@@ -192,8 +193,8 @@ func (d *Dispatcher) subscribe(ctx context.Context, config ChannelConfig, sub Su
 
 	info, err := d.getOrEnsureConsumer(ctx, config, sub, isLeader)
 	if err != nil {
-		if err == nats.ErrConsumerNotFound {
-			// this error can only occur if the dispatcher is not the leader
+		if errors.Is(err, nats.ErrConsumerNotFound) {
+			//	this error can only occur if the dispatcher is not the leader
 			logger.Infow("dispatcher not leader and consumer does not exist yet")
 			return SubscriberStatusTypeSkipped, nil
 		}
