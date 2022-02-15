@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# jetstream-ch-controller requires the permissions to do its own job
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -20,6 +21,21 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: jetstream-ch-controller
+subjects:
+  - kind: ServiceAccount
+    name: jetstream-ch-controller
+    namespace: knative-eventing
+
+---
+# then it also requires the permissions for the dispatcher, in order to grant RBAC permissions to scoped dispatchers
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jetstream-ch-controller-grant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jetstream-ch-dispatcher
 subjects:
   - kind: ServiceAccount
     name: jetstream-ch-controller

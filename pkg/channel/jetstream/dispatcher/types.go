@@ -25,9 +25,12 @@ import (
 	"knative.dev/eventing/pkg/channel/fanout"
 )
 
-type StreamNameFunc func(nc *v1alpha1.NatsJetStreamChannel) string
-type SubjectFunc func(namespace, name string) string
-type ConsumerNameFunc func(subID string) string
+type (
+	StreamNameFunc      func(nc *v1alpha1.NatsJetStreamChannel) string
+	StreamSubjectFunc   func(namespace, name string) string
+	ConsumerSubjectFunc func(namespace, name, uid string) string
+	ConsumerNameFunc    func(subID string) string
+)
 
 // EnqueueFunc is passed to the Reconciler for when a follower instance attempts to sync on a Consumer which does not
 // yet exist
@@ -36,8 +39,9 @@ type EnqueueFunc func(ref types.NamespacedName)
 type NatsDispatcherArgs struct {
 	JetStream nats.JetStreamContext
 
-	SubjectFunc      SubjectFunc
-	ConsumerNameFunc ConsumerNameFunc
+	SubjectFunc         StreamSubjectFunc
+	ConsumerNameFunc    ConsumerNameFunc
+	ConsumerSubjectFunc ConsumerSubjectFunc
 
 	PodName       string
 	ContainerName string

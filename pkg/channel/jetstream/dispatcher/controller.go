@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/client-go/tools/cache"
 	"knative.dev/eventing-natss/pkg/channel/jetstream/utils"
+	clientinject "knative.dev/eventing-natss/pkg/client/injection/client"
 	jsminformer "knative.dev/eventing-natss/pkg/client/injection/informers/messaging/v1alpha1/natsjetstreamchannel"
 	"knative.dev/eventing-natss/pkg/common/configloader/fsloader"
 	"knative.dev/eventing/pkg/apis/eventing"
@@ -87,20 +88,23 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	}
 
 	dispatcher, err := NewDispatcher(ctx, NatsDispatcherArgs{
-		JetStream:        js,
-		SubjectFunc:      utils.SubjectName,
-		ConsumerNameFunc: utils.ConsumerName,
-		PodName:          env.PodName,
-		ContainerName:    env.ContainerName,
+		JetStream:           js,
+		SubjectFunc:         utils.PublishSubjectName,
+		ConsumerNameFunc:    utils.ConsumerName,
+		ConsumerSubjectFunc: utils.ConsumerSubjectName,
+		PodName:             env.PodName,
+		ContainerName:       env.ContainerName,
 	})
 	if err != nil {
 		logger.Fatalw("failed to create dispatcher", zap.Error(err))
 	}
 
 	r := &Reconciler{
-		js:             js,
-		dispatcher:     dispatcher,
-		streamNameFunc: utils.StreamName,
+		clientSet:        clientinject.Get(ctx),
+		js:               js,
+		dispatcher:       dispatcher,
+		streamNameFunc:   utils.StreamName,
+		consumerNameFunc: dispatcher.consumerNameFunc,
 	}
 
 	impl := natsjetstreamchannel.NewImpl(ctx, r)

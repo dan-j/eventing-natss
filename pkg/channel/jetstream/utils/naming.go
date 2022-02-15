@@ -28,7 +28,7 @@ var (
 )
 
 // StreamName builds a valid NATS Jetstream stream name from a *v1alpha1.NatsJetStreamChannel.
-// If overrideName is not set, the format is NAMESPACE__NAME, where hyphens in the namespace or name are replaced
+// If overrideName is not set, the format is KN_NAMESPACE__NAME, where hyphens in the namespace or name are replaced
 // with _.
 //
 // For example:
@@ -42,10 +42,16 @@ func StreamName(nc *v1alpha1.NatsJetStreamChannel) string {
 	return strings.ToUpper(streamNameReplacer.Replace(fmt.Sprintf("KN_%s__%s", nc.Namespace, nc.Name)))
 }
 
-func SubjectName(namespace, name string) string {
+func PublishSubjectName(namespace, name string) string {
 	return fmt.Sprintf("%s.%s._knative", namespace, name)
 }
 
 func ConsumerName(subUID string) string {
 	return fmt.Sprintf("KN_SUB_%s", strings.ToUpper(uidReplacer.Replace(subUID)))
+}
+
+// ConsumerSubjectName generates a shareable subject name to bind to NATS Consumers for each Knative subscriber. This
+// can be used by multiple dispatcher replicas to share delivery of
+func ConsumerSubjectName(namespace, name, uid string) string {
+	return fmt.Sprintf("%s.%s._knative_consumer.%s", namespace, name, strings.ToLower(uidReplacer.Replace(uid)))
 }

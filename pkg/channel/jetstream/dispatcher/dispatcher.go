@@ -50,8 +50,9 @@ type Dispatcher struct {
 
 	js nats.JetStreamContext
 
-	subjectFunc      SubjectFunc
-	consumerNameFunc ConsumerNameFunc
+	publishSubjectFunc  StreamSubjectFunc
+	consumerNameFunc    ConsumerNameFunc
+	consumerSubjectFunc ConsumerSubjectFunc
 
 	// hostToChannelMap represents a map[string]eventingchannels.ChannelReference
 	hostToChannelMap sync.Map
@@ -67,11 +68,15 @@ func NewDispatcher(ctx context.Context, args NatsDispatcherArgs) (*Dispatcher, e
 	reporter := eventingchannels.NewStatsReporter(args.ContainerName, kmeta.ChildName(args.PodName, uuid.New().String()))
 
 	d := &Dispatcher{
-		dispatcher:         eventingchannels.NewMessageDispatcher(logger.Desugar()),
-		reporter:           reporter,
-		js:                 args.JetStream,
-		subjectFunc:        args.SubjectFunc,
-		consumerNameFunc:   args.ConsumerNameFunc,
+		dispatcher: eventingchannels.NewMessageDispatcher(logger.Desugar()),
+		reporter:   reporter,
+
+		js: args.JetStream,
+
+		publishSubjectFunc:  args.SubjectFunc,
+		consumerNameFunc:    args.ConsumerNameFunc,
+		consumerSubjectFunc: args.ConsumerSubjectFunc,
+
 		channelSubscribers: make(map[types.NamespacedName]sets.String),
 		consumers:          make(map[types.UID]*Consumer),
 	}
@@ -152,15 +157,10 @@ func (d *Dispatcher) ReconcileConsumers(ctx context.Context, config ChannelConfi
 			err    error
 		)
 
-		switch {
-		case toAddSubs.Has(uid):
+		if toAddSubs.Has(uid) {
 			subLogger.Debugw("subscription not configured for dispatcher, subscribing")
 			status, err = d.subscribe(logging.WithLogger(ctx, subLogger), config, sub, isLeader)
-		case toRemoveSubs.Has(uid):
-			subLogger.Debugw("extraneous subscription configured for dispatcher, unsubscribing")
-			err = d.unsubscribe(sub)
-			status = SubscriberStatusTypeDeleted
-		default:
+		} else {
 			subLogger.Debugw("subscription already up to date")
 			status = SubscriberStatusTypeUpToDate
 		}
@@ -168,13 +168,24 @@ func (d *Dispatcher) ReconcileConsumers(ctx context.Context, config ChannelConfi
 		switch status {
 		case SubscriberStatusTypeCreated, SubscriberStatusTypeUpToDate:
 			nextSubs.Insert(uid)
-		case SubscriberStatusTypeSkipped, SubscriberStatusTypeError, SubscriberStatusTypeDeleted:
+		case SubscriberStatusTypeSkipped, SubscriberStatusTypeError:
 			nextSubs.Delete(uid)
 		}
 
 		if err != nil {
 			subErrs.AddError(uid, err)
 		}
+	}
+
+	for _, toRemove := range toRemoveSubs.UnsortedList() {
+		subLogger := logger.With(zap.String("sub_uid", toRemove))
+		subLogger.Debugw("extraneous subscription configured for dispatcher, unsubscribing")
+		err := d.unsubscribe(ctx, config, types.UID(toRemove), isLeader)
+		if err != nil {
+			subErrs.AddError(toRemove, err)
+		}
+
+		nextSubs.Delete(toRemove)
 	}
 
 	d.channelSubscribers[channelNamespacedName] = nextSubs
@@ -212,7 +223,7 @@ func (d *Dispatcher) subscribe(ctx context.Context, config ChannelConfig, sub Su
 		ctx:              ctx,
 	}
 
-	consumer.jsSub, err = d.js.QueueSubscribe("", info.Name, consumer.MsgHandler, nats.Bind(info.Stream, info.Name))
+	consumer.jsSub, err = d.js.QueueSubscribe(info.Config.DeliverSubject, info.Config.DeliverGroup, consumer.MsgHandler, nats.Bind(info.Stream, info.Name))
 	if err != nil {
 		logger.Errorw("failed to create queue subscription for consumer")
 		return SubscriberStatusTypeError, err
@@ -223,16 +234,28 @@ func (d *Dispatcher) subscribe(ctx context.Context, config ChannelConfig, sub Su
 	return 0, nil
 }
 
-func (d *Dispatcher) unsubscribe(sub Subscription) error {
-	consumer, ok := d.consumers[sub.UID]
+func (d *Dispatcher) unsubscribe(ctx context.Context, config ChannelConfig, uid types.UID, isLeader bool) (err error) {
+	consumer, ok := d.consumers[uid]
 	if !ok {
 		return fmt.Errorf(
 			"unable to unsubscribe, Consumer is not present in consumers map for UID: %s",
-			string(sub.UID),
+			string(uid),
 		)
 	}
 
-	delete(d.consumers, sub.UID)
+	delete(d.consumers, uid)
+
+	defer func() {
+		if isLeader {
+			if err2 := d.deleteConsumer(ctx, config, string(uid)); err2 != nil {
+				if err == nil {
+					err = err2
+				} else {
+					err = fmt.Errorf("failed to deleteConsumer after failed consumer.Close(): %s: %w", err2.Error(), err)
+				}
+			}
+		}
+	}()
 
 	return consumer.Close()
 }
@@ -245,8 +268,11 @@ func (d *Dispatcher) getOrEnsureConsumer(ctx context.Context, config ChannelConf
 	consumerName := d.consumerNameFunc(string(sub.UID))
 
 	if isLeader {
+		deliverSubject := d.consumerSubjectFunc(config.Namespace, config.Name, string(sub.UID))
+		consumerConfig := buildConsumerConfig(consumerName, deliverSubject, config.ConsumerConfigTemplate)
+
 		// AddConsumer is idempotent so this will either create the consumer, update to match expected config, or no-op
-		info, err := d.js.AddConsumer(config.StreamName, buildConsumerConfig(consumerName, config.ConsumerConfigTemplate))
+		info, err := d.js.AddConsumer(config.StreamName, consumerConfig)
 		if err != nil {
 			logger.Errorw("failed to add consumer")
 			return nil, err
@@ -257,6 +283,18 @@ func (d *Dispatcher) getOrEnsureConsumer(ctx context.Context, config ChannelConf
 
 	// dispatcher isn't leader, try and retrieve an existing consumer
 	return d.js.ConsumerInfo(config.StreamName, consumerName)
+}
+
+func (d *Dispatcher) deleteConsumer(ctx context.Context, config ChannelConfig, uid string) error {
+	logger := logging.FromContext(ctx)
+	consumerName := d.consumerNameFunc(uid)
+
+	if err := d.js.DeleteConsumer(config.StreamName, consumerName); err != nil {
+		logger.Errorw("failed to delete JetStream Consumer", zap.Error(err))
+		return err
+	}
+
+	return nil
 }
 
 func (d *Dispatcher) messageReceiver(ctx context.Context, ch eventingchannels.ChannelReference, message binding.Message, transformers []binding.Transformer, _ nethttp.Header) error {
@@ -271,7 +309,7 @@ func (d *Dispatcher) messageReceiver(ctx context.Context, ch eventingchannels.Ch
 		return err
 	}
 
-	subject := d.subjectFunc(ch.Namespace, ch.Name)
+	subject := d.publishSubjectFunc(ch.Namespace, ch.Name)
 	logger = logger.With(zap.String("msg_id", string(eventID)))
 	logger.Debugw("parsed message into JetStream encoding, publishing to subject", zap.String("subj", subject))
 

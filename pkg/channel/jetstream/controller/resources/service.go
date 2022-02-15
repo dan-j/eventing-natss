@@ -39,7 +39,7 @@ const (
 type ServiceOption func(*corev1.Service) error
 
 func MakeJSMChannelServiceName(name string) string {
-	return fmt.Sprintf("%s-kn-channel", name)
+	return fmt.Sprintf("%s-kn-jsm-channel", name)
 }
 
 // ExternalService is a functional option for MakeK8sService to create a K8s service of type ExternalName

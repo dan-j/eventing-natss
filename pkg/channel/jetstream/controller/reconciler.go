@@ -151,7 +151,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 	}
 
 	if len(e.Subsets) == 0 {
-		logger.Errorw("No endpoints found for Dispatcher service", zap.Error(err))
+		logger.Infow("No endpoints found for Dispatcher service")
 		nc.Status.MarkEndpointsFailed("DispatcherEndpointsNotReady", "There are no endpoints ready for Dispatcher service")
 		return controller.NewRequeueAfter(10 * time.Second)
 	}

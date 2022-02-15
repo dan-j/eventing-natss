@@ -23,9 +23,14 @@ import (
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"knative.dev/eventing-natss/pkg/client/clientset/versioned"
 	commonerr "knative.dev/eventing-natss/pkg/common/error"
+	v1 "knative.dev/eventing/pkg/apis/duck/v1"
 	"knative.dev/eventing/pkg/channel"
 	"knative.dev/eventing/pkg/channel/fanout"
+	"knative.dev/pkg/apis/duck"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
@@ -49,10 +54,12 @@ const (
 // - Creates a HTTP listener which publishes received events to the Stream
 // - Creates a consumer for each .spec.subscribers[] and forwards events to the subscriber address
 type Reconciler struct {
+	clientSet  versioned.Interface
 	js         nats.JetStreamManager
 	dispatcher *Dispatcher
 
-	streamNameFunc StreamNameFunc
+	streamNameFunc   StreamNameFunc
+	consumerNameFunc ConsumerNameFunc
 }
 
 var _ jsmreconciler.Interface = (*Reconciler)(nil)
@@ -61,14 +68,77 @@ var _ jsmreconciler.Finalizer = (*Reconciler)(nil)
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) pkgreconciler.Event {
 	logger := logging.FromContext(ctx)
-	logger.Debugw("ReconcileKind for channel", zap.String("channel", nc.Name))
+	logger.Debugw("ReconcileKind for channel")
 
 	if err := r.reconcileStream(ctx, nc); err != nil {
 		logger.Errorw("failed to reconcile stream", zap.Error(err))
 		return err
 	}
 
-	return r.syncChannel(ctx, nc, true)
+	if err := r.syncChannel(ctx, nc, true); err != nil {
+		logger.Errorw("failed to syncChannel", zap.Error(err))
+		return err
+	}
+
+	return r.reconcileSubscriberStatuses(ctx, nc)
+}
+
+func (r *Reconciler) reconcileSubscriberStatuses(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) error {
+	logger := logging.FromContext(ctx)
+	after := nc.DeepCopy()
+	after.Status.Subscribers = make([]v1.SubscriberStatus, len(nc.Spec.Subscribers))
+	for i, s := range nc.Spec.Subscribers {
+		slog := logger.With(zap.String("sub_uid", string(s.UID)))
+		slog.Debugw("reconciling subscriber status")
+
+		after.Status.Subscribers[i] = v1.SubscriberStatus{
+			UID:                s.UID,
+			ObservedGeneration: s.Generation,
+			Ready:              corev1.ConditionUnknown,
+		}
+
+		_, err := r.js.ConsumerInfo(r.streamNameFunc(nc), r.consumerNameFunc(string(s.UID)))
+		if err != nil {
+			after.Status.Subscribers[i].Ready = corev1.ConditionFalse
+			if errors.Is(err, nats.ErrConsumerNotFound) {
+				after.Status.Subscribers[i].Message = "Consumer does not exist"
+			} else {
+				slog.Errorw("failed to retrieve ConsumerInfo", zap.Error(err))
+				after.Status.Subscribers[i].Message = fmt.Sprintf("Failed to query Consumer Info: %s", err.Error())
+			}
+
+			continue
+		}
+
+		after.Status.Subscribers[i].Ready = corev1.ConditionTrue
+	}
+
+	jsonPatch, err := duck.CreatePatch(nc, after)
+	if err != nil {
+		return fmt.Errorf("failed to create JSON patch: %w", err)
+	}
+
+	// If there is nothing to patch, we are good, just return.
+	// Empty patch is [], hence we check for that.
+	if len(jsonPatch) == 0 {
+		return nil
+	}
+
+	patch, err := jsonPatch.MarshalJSON()
+	if err != nil {
+		return fmt.Errorf("failed to marshal patch to JSON: %w", err)
+	}
+
+	patched, err := r.clientSet.MessagingV1alpha1().
+		NatsJetStreamChannels(nc.Namespace).
+		Patch(ctx, nc.Name, types.JSONPatchType, patch, metav1.PatchOptions{}, "status")
+	if err != nil {
+		return fmt.Errorf("failed to patch subscriber status: %w", err)
+	}
+
+	logger.Debugw("patched resource", zap.Any("patch", patch), zap.Any("patched", patched))
+
+	return nil
 }
 
 // ObserveKind is invoked when a NatsJetStreamChannel requires reconciliation but the dispatcher is not the leader.
@@ -82,8 +152,45 @@ func (r *Reconciler) ObserveKind(ctx context.Context, nc *v1alpha1.NatsJetStream
 	return r.syncChannel(ctx, nc, false)
 }
 
-func (r *Reconciler) FinalizeKind(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) pkgreconciler.Event {
-	panic("implement me")
+// FinalizeKind is invoked when the resource is set for deletion. This method is only called when the controller is
+// leader, so unsubscribe all consumers and then delete the stream.
+func (r *Reconciler) FinalizeKind(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) (err pkgreconciler.Event) {
+	logger := logging.FromContext(ctx)
+	logger.Debugw("FinalizeKind for channel", zap.String("channel", nc.Name))
+
+	defer func() {
+		if err2 := r.js.DeleteStream(r.streamNameFunc(nc)); err2 != nil {
+			if err == nil {
+				err = err2
+			} else {
+				err = fmt.Errorf("failed to DeleteStream after failure to ReconcileConsumers(): %s: %w", err2.Error(), err)
+			}
+		}
+	}()
+
+	config := r.newConfigFromChannel(nc)
+
+	// clear subscriptions then ReconcileConsumers will just clean everything up for us
+	config.Subscriptions = nil
+
+	return r.dispatcher.ReconcileConsumers(ctx, config, true)
+}
+
+// ObserveDeletion is called on non-leader controllers after the actual resource is deleted. In this case we just
+// unsubscribe from all consumers, the leader will clean the actual JetStream resources up for us via FinalizeKind.
+func (r *Reconciler) ObserveDeletion(ctx context.Context, key types.NamespacedName) error {
+	logger := logging.FromContext(ctx)
+	logger.Debugw("ObserveDeletion for channel", zap.String("channel", key.Name))
+
+	// ChannelConfig will be missing a load of fields because the NatsJetStreamChannel has been deleted so there's no
+	// way to know the stream and consumer template, however since there are no subscriptions this is going to cause the
+	// method to just unsubscribe from everything, which doesn't need any of those fields set.
+	return r.dispatcher.ReconcileConsumers(ctx, ChannelConfig{
+		ChannelReference: channel.ChannelReference{
+			Namespace: key.Namespace,
+			Name:      key.Name,
+		},
+	}, false)
 }
 
 // reconcileStream ensures that the stream exists with the correct configuration.
@@ -91,7 +198,7 @@ func (r *Reconciler) reconcileStream(ctx context.Context, nc *v1alpha1.NatsJetSt
 	logger := logging.FromContext(ctx)
 
 	streamName := r.streamNameFunc(nc)
-	primarySubject := r.dispatcher.subjectFunc(nc.Namespace, nc.Name)
+	primarySubject := r.dispatcher.publishSubjectFunc(nc.Namespace, nc.Name)
 
 	existing, err := r.js.StreamInfo(streamName)
 	if err != nil && !errors.Is(err, nats.ErrStreamNotFound) {

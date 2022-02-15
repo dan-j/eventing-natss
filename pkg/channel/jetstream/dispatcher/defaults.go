@@ -55,11 +55,11 @@ func buildStreamConfig(streamName, subject string, config *v1alpha1.StreamConfig
 
 }
 
-func buildConsumerConfig(consumerName string, template *v1alpha1.ConsumerConfigTemplate) *nats.ConsumerConfig {
+func buildConsumerConfig(consumerName, deliverSubject string, template *v1alpha1.ConsumerConfigTemplate) *nats.ConsumerConfig {
 	consumerConfig := nats.ConsumerConfig{
 		Durable:        consumerName,
 		DeliverGroup:   consumerName,
-		DeliverSubject: nats.NewInbox(),
+		DeliverSubject: deliverSubject,
 		AckPolicy:      nats.AckExplicitPolicy,
 	}
 
