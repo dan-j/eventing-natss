@@ -30,10 +30,9 @@ const (
 	// to config-nats and apply them in the dispatcher deployment
 	ConfigMapHashAnnotationKey = "jetstream.eventing.knative.dev/configmap-hash"
 
-	// KnativeConfigMapReaderClusterRole is the cluster role granting workloads access to read configmaps. This is bound
-	// to dispatcher serviceaccounts via a rolebinding within the knative-eventing namespace to enable watching of
-	// common knative config (i.e. tracing)
-	KnativeConfigMapReaderClusterRole = "eventing-config-reader"
+	// KnativeConfigMapEventingRole is the role granting workloads access to read configmaps and leases within the
+	// knative-eventing namespace. This must be bound to namespace-scoped dispatchers in order for it to function.
+	KnativeConfigMapEventingRole = "jetstream-ch-dispatcher-eventing"
 
 	// DefaultNatsURL is derived from the installation documentation which defaults to this service name within the
 	// nats-io namespace.

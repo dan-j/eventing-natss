@@ -15,12 +15,12 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: jetstream-ch-dispatcher-leases
+  name: jetstream-ch-dispatcher-eventing
   namespace: knative-eventing
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: jetstream-ch-dispatcher-leases
+  name: jetstream-ch-dispatcher-eventing
 subjects:
   - kind: ServiceAccount
     name: jetstream-ch-dispatcher

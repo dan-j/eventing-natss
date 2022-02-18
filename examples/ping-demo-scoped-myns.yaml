@@ -1,16 +1,30 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-ns
+---
 apiVersion: messaging.knative.dev/v1alpha1
 kind: NatsJetStreamChannel
 metadata:
   name: my-default-channel
-  namespace: default
+  namespace: my-ns
   annotations:
     eventing.knative.dev/scope: namespace
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-nats
+  namespace: my-ns
+data:
+  eventing-nats: |
+    url: nats://nats.nats-io.svc.cluster.local
 ---
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: event-display
-  namespace: default
+  namespace: my-ns
 spec:
   template:
     metadata:
@@ -27,7 +41,7 @@ apiVersion: sources.knative.dev/v1
 kind: PingSource
 metadata:
   name: ping
-  namespace: default
+  namespace: my-ns
 spec:
   schedule: "* * * * *"
   contentType: "application/json"
@@ -43,7 +57,7 @@ apiVersion: messaging.knative.dev/v1
 kind: Subscription
 metadata:
   name: subscription
-  namespace: default
+  namespace: my-ns
 spec:
   channel:
     apiVersion: messaging.knative.dev/v1alpha1
@@ -66,7 +80,7 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: dead-letter-display
-  namespace: default
+  namespace: my-ns
 spec:
   template:
     spec:

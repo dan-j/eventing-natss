@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/go-cmp/cmp"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"knative.dev/eventing-natss/pkg/channel/jetstream"
 	"knative.dev/eventing-natss/pkg/channel/jetstream/controller/resources"
@@ -28,9 +29,6 @@ import (
 	"knative.dev/pkg/apis"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/network"
-	"time"
-
-	"go.uber.org/zap"
 
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/reconciler"
@@ -123,6 +121,8 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 		dispatcherNamespace = nc.Namespace
 	}
 
+	logger.Debugw("ReconcileKind", zap.String("dispatcher_namespace", dispatcherNamespace))
+
 	// Make sure the dispatcher deployment exists and propagate the status to the Channel
 	if err := r.reconcileDispatcher(ctx, scope, dispatcherNamespace, nc); err != nil {
 		return err
@@ -142,7 +142,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			nc.Status.MarkEndpointsFailed("DispatcherEndpointsDoesNotExist", "Dispatcher Endpoints does not exist")
-			return controller.NewRequeueAfter(10 * time.Second)
+			return nil
 		}
 
 		logger.Errorw("Unable to get the dispatcher endpoints", zap.Error(err))
@@ -153,7 +153,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 	if len(e.Subsets) == 0 {
 		logger.Infow("No endpoints found for Dispatcher service")
 		nc.Status.MarkEndpointsFailed("DispatcherEndpointsNotReady", "There are no endpoints ready for Dispatcher service")
-		return controller.NewRequeueAfter(10 * time.Second)
+		return nil
 	}
 
 	nc.Status.MarkEndpointsTrue()
@@ -181,7 +181,7 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, scope, dispatcherN
 			return err
 		}
 
-		err = r.reconcileRoleBinding(ctx, jetstream.DispatcherName, dispatcherNamespace, nc, jetstream.DispatcherName, sa)
+		err = r.reconcileRoleBinding(ctx, jetstream.DispatcherName, dispatcherNamespace, nc, jetstream.DispatcherName, sa, true)
 		if err != nil {
 			return err
 		}
@@ -189,12 +189,11 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, scope, dispatcherN
 		// Reconcile the RoleBinding allowing read access to the shared configmaps.
 		// Note this RoleBinding is created in the system namespace and points to a
 		// subject in the dispatcher's namespace.
-		roleBindingName := fmt.Sprintf("%s-%s", jetstream.DispatcherName, dispatcherNamespace)
-		err = r.reconcileRoleBinding(ctx, roleBindingName, r.systemNamespace, nc, constants.KnativeConfigMapReaderClusterRole, sa)
+		roleBindingName := fmt.Sprintf("%s-eventing-scoped-%s", jetstream.DispatcherName, dispatcherNamespace)
+		err = r.reconcileRoleBinding(ctx, roleBindingName, r.systemNamespace, nc, constants.KnativeConfigMapEventingRole, sa, false)
 		if err != nil {
 			return err
 		}
-
 	}
 
 	args := resources.DispatcherDeploymentArgs{
@@ -209,45 +208,50 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, scope, dispatcherN
 	want := resources.NewDispatcherDeploymentBuilder().WithArgs(&args).Build()
 	d, err := r.deploymentLister.Deployments(dispatcherNamespace).Get(jetstream.DispatcherName)
 	if err != nil {
+		logger.Debugw("failed to get dispatcher deployment", zap.Error(err))
 		if apierrs.IsNotFound(err) {
-			d, err := r.kubeClientSet.AppsV1().Deployments(dispatcherNamespace).Create(ctx, want, metav1.CreateOptions{})
-			if err == nil {
-				controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeNormal, dispatcherDeploymentCreated, "Dispatcher deployment created")
-				nc.Status.PropagateDispatcherStatus(&d.Status)
-				return err
-			} else {
+			logger.Debugw("dispatcher deployment does not exist, creating a new one")
+			d, err = r.kubeClientSet.AppsV1().Deployments(dispatcherNamespace).Create(ctx, want, metav1.CreateOptions{})
+			if err != nil {
 				logger.Errorw("error while creating dispatcher deployment", zap.Error(err), zap.String("namespace", dispatcherNamespace), zap.Any("deployment", want))
 				nc.Status.MarkDispatcherFailed(dispatcherDeploymentFailed, "Failed to create the dispatcher deployment: %v", err)
 				return newDeploymentWarn(err)
 			}
+
+			logger.Debugw("dispatcher deployment created", zap.Any("deployment", d))
+
+			controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeNormal, dispatcherDeploymentCreated, "Dispatcher deployment created")
+			nc.Status.PropagateDispatcherStatus(&d.Status)
+			return nil
 		}
+
 		logger.Errorw("can't get dispatcher deployment", zap.Error(err), zap.String("namespace", dispatcherNamespace),
 			zap.String("dispatcher-name", jetstream.DispatcherName))
 		nc.Status.MarkDispatcherUnknown("DispatcherDeploymentFailed", "Failed to get dispatcher deployment: %v", err)
 		return err
-	} else {
-		// scale up the dispatcher to 1, otherwise keep the existing number in case the user has scaled it up.
-		if *d.Spec.Replicas == 0 {
-			logger.Infof("Dispatcher deployment has 0 replica. Scaling up deployment to 1 replica")
-			args.Replicas = 1
-		} else {
-			args.Replicas = *d.Spec.Replicas
-		}
-		want = resources.NewDispatcherDeploymentBuilderFromDeployment(d.DeepCopy()).WithArgs(&args).Build()
-
-		if !equality.Semantic.DeepEqual(want.ObjectMeta, d.ObjectMeta) || !equality.Semantic.DeepEqual(want.Spec, d.Spec) {
-			logger.Infof("Dispatcher deployment changed; reconciling: ObjectMeta=\n%s, Spec=\n%s", cmp.Diff(want.ObjectMeta, d.ObjectMeta), cmp.Diff(want.Spec, d.Spec))
-			if d, err = r.kubeClientSet.AppsV1().Deployments(dispatcherNamespace).Update(ctx, want, metav1.UpdateOptions{}); err != nil {
-				logger.Errorw("error while updating dispatcher deployment", zap.Error(err), zap.String("namespace", dispatcherNamespace), zap.Any("deployment", want))
-				nc.Status.MarkServiceFailed("DispatcherDeploymentUpdateFailed", "Failed to update the dispatcher deployment: %v", err)
-				return newDeploymentWarn(err)
-			} else {
-				controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeNormal, dispatcherDeploymentUpdated, "Dispatcher deployment updated")
-			}
-		}
-		nc.Status.PropagateDispatcherStatus(&d.Status)
-		return nil
 	}
+
+	// scale up the dispatcher to 1, otherwise keep the existing number in case the user has scaled it up.
+	if *d.Spec.Replicas == 0 {
+		logger.Infof("Dispatcher deployment has 0 replica. Scaling up deployment to 1 replica")
+		args.Replicas = 1
+	} else {
+		args.Replicas = *d.Spec.Replicas
+	}
+	want = resources.NewDispatcherDeploymentBuilderFromDeployment(d.DeepCopy()).WithArgs(&args).Build()
+
+	if !equality.Semantic.DeepEqual(want.ObjectMeta, d.ObjectMeta) || !equality.Semantic.DeepEqual(want.Spec, d.Spec) {
+		logger.Infof("Dispatcher deployment changed; reconciling: ObjectMeta=\n%s, Spec=\n%s", cmp.Diff(want.ObjectMeta, d.ObjectMeta), cmp.Diff(want.Spec, d.Spec))
+		if d, err = r.kubeClientSet.AppsV1().Deployments(dispatcherNamespace).Update(ctx, want, metav1.UpdateOptions{}); err != nil {
+			logger.Errorw("error while updating dispatcher deployment", zap.Error(err), zap.String("namespace", dispatcherNamespace), zap.Any("deployment", want))
+			nc.Status.MarkServiceFailed("DispatcherDeploymentUpdateFailed", "Failed to update the dispatcher deployment: %v", err)
+			return newDeploymentWarn(err)
+		} else {
+			controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeNormal, dispatcherDeploymentUpdated, "Dispatcher deployment updated")
+		}
+	}
+	nc.Status.PropagateDispatcherStatus(&d.Status)
+	return nil
 }
 
 func (r *Reconciler) reconcileServiceAccount(ctx context.Context, dispatcherNamespace string, nc *v1alpha1.NatsJetStreamChannel) (*corev1.ServiceAccount, error) {
@@ -260,7 +264,7 @@ func (r *Reconciler) reconcileServiceAccount(ctx context.Context, dispatcherName
 				controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeNormal, dispatcherServiceAccountCreated, "Dispatcher service account created")
 				return sa, nil
 			} else {
-				nc.Status.MarkDispatcherFailed("DispatcherDeploymentFailed", "Failed to create the dispatcher service account: %v", err)
+				nc.Status.MarkDispatcherFailed("DispatcherServiceAccountFailed", "Failed to create the dispatcher service account: %v", err)
 				return sa, newServiceAccountWarn(err)
 			}
 		}
@@ -271,17 +275,17 @@ func (r *Reconciler) reconcileServiceAccount(ctx context.Context, dispatcherName
 	return sa, err
 }
 
-func (r *Reconciler) reconcileRoleBinding(ctx context.Context, name string, ns string, nc *v1alpha1.NatsJetStreamChannel, clusterRoleName string, sa *corev1.ServiceAccount) error {
+func (r *Reconciler) reconcileRoleBinding(ctx context.Context, name string, ns string, nc *v1alpha1.NatsJetStreamChannel, roleName string, sa *corev1.ServiceAccount, isClusterRole bool) error {
 	_, err := r.roleBindingLister.RoleBindings(ns).Get(name)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
-			expected := resources.MakeRoleBinding(ns, name, sa, clusterRoleName)
+			expected := resources.MakeRoleBinding(ns, name, sa, roleName, isClusterRole)
 			_, err := r.kubeClientSet.RbacV1().RoleBindings(ns).Create(ctx, expected, metav1.CreateOptions{})
 			if err == nil {
 				controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeNormal, dispatcherRoleBindingCreated, "Dispatcher role binding created")
 				return nil
 			} else {
-				nc.Status.MarkDispatcherFailed("DispatcherDeploymentFailed", "Failed to create the dispatcher role binding: %v", err)
+				nc.Status.MarkDispatcherFailed("DispatcherRoleBindingFailed", "Failed to create the dispatcher role binding: %v", err)
 				return newRoleBindingWarn(err)
 			}
 		}

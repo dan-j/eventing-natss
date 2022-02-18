@@ -28,12 +28,16 @@ import (
 	"knative.dev/eventing-natss/pkg/common/configloader/fsloader"
 )
 
-const component = "jetstream-channel-dispatcher"
-
 func main() {
+	component := "jetstream-channel-dispatcher"
+
 	ctx := signals.NewContext()
 	ns := os.Getenv("NAMESPACE")
 	if ns != "" {
+		// component is used to build the lease name for leader-election. When namespace-scoped, dispatchers scoped to
+		// different namespaces need to have their own leader election.
+		component = component + "-" + ns
+
 		ctx = injection.WithNamespaceScope(ctx, ns)
 	}
 

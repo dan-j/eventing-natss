@@ -33,8 +33,8 @@ const (
 
 var (
 	dispatcherLabels = map[string]string{
-		"messaging.knative.dev/channel": "nats-jetstream-channel",
-		"messaging.knative.dev/role":    "dispatcher",
+		ChannelLabelKey: ChannelLabelValue,
+		RoleLabelKey:    DispatcherRoleLabelValue,
 	}
 )
 

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"knative.dev/eventing-natss/pkg/channel/jetstream"
+	"knative.dev/eventing-natss/pkg/channel/jetstream/controller/resources"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/reconciler"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/pointer"
@@ -48,13 +48,8 @@ import (
 )
 
 const (
-	channelLabelKey          = "messaging.knative.dev/channel"
-	channelLabelValue        = "nats-jetstream-channel"
-	roleLabelKey             = "messaging.knative.dev/role"
-	dispatcherRoleLabelValue = "dispatcher"
-	controllerRoleLabelValue = "controller"
-	interval                 = 100 * time.Millisecond
-	timeout                  = 5 * time.Minute
+	interval = 100 * time.Millisecond
+	timeout  = 5 * time.Minute
 )
 
 // NewController initializes the controller and is called by the generated code.
@@ -101,7 +96,8 @@ func NewController(ctx context.Context, _ configmap.Watcher) *controller.Impl {
 	logger.Info("Setting up event handlers")
 	jsmInformer.Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 
-	grCh := func(_ interface{}) {
+	grCh := func(v interface{}) {
+		logger.Debug("Changes detected, doing global resync", zap.String("trigger", fmt.Sprintf("%v", v)))
 		impl.GlobalResync(jsmInformer.Informer())
 	}
 	filterFunc := controller.FilterWithName(jetstream.DispatcherName)
@@ -131,8 +127,8 @@ func NewController(ctx context.Context, _ configmap.Watcher) *controller.Impl {
 	})
 	podInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
 		FilterFunc: reconciler.ChainFilterFuncs(
-			reconciler.LabelFilterFunc(channelLabelKey, channelLabelValue, false),
-			reconciler.LabelFilterFunc(roleLabelKey, dispatcherRoleLabelValue, false),
+			reconciler.LabelFilterFunc(resources.ChannelLabelKey, resources.ChannelLabelValue, false),
+			reconciler.LabelFilterFunc(resources.RoleLabelKey, resources.DispatcherRoleLabelValue, false),
 		),
 		Handler: controller.HandleAll(grCh),
 	})
@@ -143,36 +139,23 @@ func NewController(ctx context.Context, _ configmap.Watcher) *controller.Impl {
 // getControllerOwnerRef builds a *metav1.OwnerReference of the deployment for this controller instance. This is then
 // used by the Reconciler for adding owner references to the dispatcher deployments.
 func getControllerOwnerRef(ctx context.Context) (*metav1.OwnerReference, error) {
-	logger := logging.FromContext(ctx)
-	ctrlDeploymentLabels := labels.Set{
-		channelLabelKey: channelLabelValue,
-		roleLabelKey:    controllerRoleLabelValue,
-	}
-
 	ownerRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
+		APIVersion: "rbac.authorization.k8s.io/v1",
+		Kind:       "ClusterRole",
 		Controller: pointer.BoolPtr(true),
 	}
 	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
 		k8sClient := kubeclient.Get(ctx)
-		deploymentList, err := k8sClient.AppsV1().Deployments(system.Namespace()).List(ctx, metav1.ListOptions{LabelSelector: ctrlDeploymentLabels.String()})
+		clusterRole, err := k8sClient.RbacV1().ClusterRoles().Get(ctx, jetstream.ControllerName, metav1.GetOptions{})
 		if err != nil {
-			return true, fmt.Errorf("error listing NatsJetStreamChannel controller deployment labels %w", err)
-		} else if len(deploymentList.Items) == 0 {
-			// Simple exponential backoff
-			logger.Debugw("found zero NatsJetStreamChannel controller deployment matching labels. Retrying.", zap.String("namespace", system.Namespace()), zap.Any("selectors", ctrlDeploymentLabels.AsSelector()))
-			return false, nil
-		} else if len(deploymentList.Items) > 1 {
-			return true, fmt.Errorf("found an unexpected number of NatsJetStreamChannel controller deployment matching labels. Got: %d, Want: 1", len(deploymentList.Items))
+			return true, fmt.Errorf("error retrieving ClusterRole for NatsJetStreamChannel: %w", err)
 		}
-		d := deploymentList.Items[0]
-		ownerRef.Name = d.Name
-		ownerRef.UID = d.UID
+		ownerRef.Name = clusterRole.Name
+		ownerRef.UID = clusterRole.UID
 		return true, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to determine the deployment of the NatsJetStreamChannel controller based on labels. %w", err)
+		return nil, err
 	}
 	return &ownerRef, nil
 }
