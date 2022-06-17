@@ -138,6 +138,9 @@ func TestChannelInitializeConditions(t *testing.T) {
 					}, {
 						Type:   NatsJetStreamChannelConditionServiceReady,
 						Status: corev1.ConditionUnknown,
+					}, {
+						Type:   NatsJetStreamChannelConditionStreamReady,
+						Status: corev1.ConditionUnknown,
 					}},
 				},
 			},
@@ -175,6 +178,9 @@ func TestChannelInitializeConditions(t *testing.T) {
 					}, {
 						Type:   NatsJetStreamChannelConditionServiceReady,
 						Status: corev1.ConditionUnknown,
+					}, {
+						Type:   NatsJetStreamChannelConditionStreamReady,
+						Status: corev1.ConditionUnknown,
 					}},
 				},
 			},
@@ -211,6 +217,9 @@ func TestChannelInitializeConditions(t *testing.T) {
 						Status: corev1.ConditionUnknown,
 					}, {
 						Type:   NatsJetStreamChannelConditionServiceReady,
+						Status: corev1.ConditionUnknown,
+					}, {
+						Type:   NatsJetStreamChannelConditionStreamReady,
 						Status: corev1.ConditionUnknown,
 					}},
 				},
