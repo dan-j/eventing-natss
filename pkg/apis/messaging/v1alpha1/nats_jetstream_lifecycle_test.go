@@ -30,12 +30,12 @@ import (
 )
 
 var condReady = apis.Condition{
-	Type:   NatssChannelConditionReady,
+	Type:   NatsJetStreamChannelConditionReady,
 	Status: corev1.ConditionTrue,
 }
 
 var condDispatcherNotReady = apis.Condition{
-	Type:   NatssChannelConditionDispatcherReady,
+	Type:   NatsJetStreamChannelConditionDispatcherReady,
 	Status: corev1.ConditionFalse,
 }
 
@@ -121,22 +121,22 @@ func TestChannelInitializeConditions(t *testing.T) {
 			ChannelableStatus: eventingduckv1.ChannelableStatus{
 				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
-						Type:   NatssChannelConditionAddressable,
+						Type:   NatsJetStreamChannelConditionAddressable,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionChannelServiceReady,
+						Type:   NatsJetStreamChannelConditionChannelServiceReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionDispatcherReady,
+						Type:   NatsJetStreamChannelConditionDispatcherReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionEndpointsReady,
+						Type:   NatsJetStreamChannelConditionEndpointsReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionReady,
+						Type:   NatsJetStreamChannelConditionReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionServiceReady,
+						Type:   NatsJetStreamChannelConditionServiceReady,
 						Status: corev1.ConditionUnknown,
 					}},
 				},
@@ -148,7 +148,7 @@ func TestChannelInitializeConditions(t *testing.T) {
 			ChannelableStatus: eventingduckv1.ChannelableStatus{
 				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
-						Type:   NatssChannelConditionDispatcherReady,
+						Type:   NatsJetStreamChannelConditionDispatcherReady,
 						Status: corev1.ConditionFalse,
 					}},
 				},
@@ -158,22 +158,22 @@ func TestChannelInitializeConditions(t *testing.T) {
 			ChannelableStatus: eventingduckv1.ChannelableStatus{
 				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
-						Type:   NatssChannelConditionAddressable,
+						Type:   NatsJetStreamChannelConditionAddressable,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionChannelServiceReady,
+						Type:   NatsJetStreamChannelConditionChannelServiceReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionDispatcherReady,
+						Type:   NatsJetStreamChannelConditionDispatcherReady,
 						Status: corev1.ConditionFalse,
 					}, {
-						Type:   NatssChannelConditionEndpointsReady,
+						Type:   NatsJetStreamChannelConditionEndpointsReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionReady,
+						Type:   NatsJetStreamChannelConditionReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionServiceReady,
+						Type:   NatsJetStreamChannelConditionServiceReady,
 						Status: corev1.ConditionUnknown,
 					}},
 				},
@@ -185,7 +185,7 @@ func TestChannelInitializeConditions(t *testing.T) {
 			ChannelableStatus: eventingduckv1.ChannelableStatus{
 				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
-						Type:   NatssChannelConditionDispatcherReady,
+						Type:   NatsJetStreamChannelConditionDispatcherReady,
 						Status: corev1.ConditionTrue,
 					}},
 				},
@@ -195,22 +195,22 @@ func TestChannelInitializeConditions(t *testing.T) {
 			ChannelableStatus: eventingduckv1.ChannelableStatus{
 				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
-						Type:   NatssChannelConditionAddressable,
+						Type:   NatsJetStreamChannelConditionAddressable,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionChannelServiceReady,
+						Type:   NatsJetStreamChannelConditionChannelServiceReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionDispatcherReady,
+						Type:   NatsJetStreamChannelConditionDispatcherReady,
 						Status: corev1.ConditionTrue,
 					}, {
-						Type:   NatssChannelConditionEndpointsReady,
+						Type:   NatsJetStreamChannelConditionEndpointsReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionReady,
+						Type:   NatsJetStreamChannelConditionReady,
 						Status: corev1.ConditionUnknown,
 					}, {
-						Type:   NatssChannelConditionServiceReady,
+						Type:   NatsJetStreamChannelConditionServiceReady,
 						Status: corev1.ConditionUnknown,
 					}},
 				},
@@ -233,59 +233,77 @@ func TestChannelIsReady(t *testing.T) {
 		name                    string
 		markServiceReady        bool
 		markChannelServiceReady bool
+		markStreamReady         bool
 		setAddress              bool
 		markEndpointsReady      bool
 		wantReady               bool
 		dispatcherStatus        *appsv1.DeploymentStatus
-	}{{
-		name:                    "all happy",
-		markServiceReady:        true,
-		markChannelServiceReady: true,
-		markEndpointsReady:      true,
-		dispatcherStatus:        deploymentStatusReady,
-		setAddress:              true,
-		wantReady:               true,
-	}, {
-		name:                    "service not ready",
-		markServiceReady:        false,
-		markChannelServiceReady: false,
-		markEndpointsReady:      true,
-		dispatcherStatus:        deploymentStatusReady,
-		setAddress:              true,
-		wantReady:               false,
-	}, {
-		name:                    "endpoints not ready",
-		markServiceReady:        true,
-		markChannelServiceReady: false,
-		markEndpointsReady:      false,
-		dispatcherStatus:        deploymentStatusReady,
-		setAddress:              true,
-		wantReady:               false,
-	}, {
-		name:                    "deployment not ready",
-		markServiceReady:        true,
-		markEndpointsReady:      true,
-		markChannelServiceReady: false,
-		dispatcherStatus:        deploymentStatusNotReady,
-		setAddress:              true,
-		wantReady:               false,
-	}, {
-		name:                    "address not set",
-		markServiceReady:        true,
-		markChannelServiceReady: false,
-		markEndpointsReady:      true,
-		dispatcherStatus:        deploymentStatusReady,
-		setAddress:              false,
-		wantReady:               false,
-	}, {
-		name:                    "channel service not ready",
-		markServiceReady:        true,
-		markChannelServiceReady: false,
-		markEndpointsReady:      true,
-		dispatcherStatus:        deploymentStatusReady,
-		setAddress:              true,
-		wantReady:               false,
-	}}
+	}{
+		{
+			name:                    "all happy",
+			markServiceReady:        true,
+			markStreamReady:         true,
+			markChannelServiceReady: true,
+			markEndpointsReady:      true,
+			dispatcherStatus:        deploymentStatusReady,
+			setAddress:              true,
+			wantReady:               true,
+		},
+		{
+			name:                    "service not ready",
+			markServiceReady:        false,
+			markChannelServiceReady: false,
+			markStreamReady:         true,
+			markEndpointsReady:      true,
+			dispatcherStatus:        deploymentStatusReady,
+			setAddress:              true,
+			wantReady:               false,
+		}, {
+			name:                    "endpoints not ready",
+			markServiceReady:        true,
+			markChannelServiceReady: false,
+			markStreamReady:         true,
+			markEndpointsReady:      false,
+			dispatcherStatus:        deploymentStatusReady,
+			setAddress:              true,
+			wantReady:               false,
+		}, {
+			name:                    "deployment not ready",
+			markServiceReady:        true,
+			markEndpointsReady:      true,
+			markChannelServiceReady: false,
+			markStreamReady:         true,
+			dispatcherStatus:        deploymentStatusNotReady,
+			setAddress:              true,
+			wantReady:               false,
+		}, {
+			name:                    "address not set",
+			markServiceReady:        true,
+			markChannelServiceReady: false,
+			markStreamReady:         true,
+			markEndpointsReady:      true,
+			dispatcherStatus:        deploymentStatusReady,
+			setAddress:              false,
+			wantReady:               false,
+		}, {
+			name:                    "channel service not ready",
+			markServiceReady:        true,
+			markChannelServiceReady: false,
+			markStreamReady:         true,
+			markEndpointsReady:      true,
+			dispatcherStatus:        deploymentStatusReady,
+			setAddress:              true,
+			wantReady:               false,
+		}, {
+			name:                    "stream not ready",
+			markServiceReady:        true,
+			markStreamReady:         false,
+			markChannelServiceReady: true,
+			markEndpointsReady:      true,
+			dispatcherStatus:        deploymentStatusReady,
+			setAddress:              true,
+			wantReady:               false,
+		}}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cs := &NatsJetStreamChannelStatus{}
@@ -299,6 +317,11 @@ func TestChannelIsReady(t *testing.T) {
 				cs.MarkChannelServiceTrue()
 			} else {
 				cs.MarkChannelServiceFailed("NotReadyChannelService", "testing")
+			}
+			if test.markStreamReady {
+				cs.MarkStreamTrue()
+			} else {
+				cs.MarkStreamFailed("NotreadyStream", "testing")
 			}
 			if test.setAddress {
 				cs.SetAddress(&apis.URL{Scheme: "http", Host: "foo.bar"})
@@ -332,13 +355,13 @@ func TestNatssChannelStatus_SetAddressable(t *testing.T) {
 					Status: duckv1.Status{
 						Conditions: []apis.Condition{
 							{
-								Type:   NatssChannelConditionAddressable,
+								Type:   NatsJetStreamChannelConditionAddressable,
 								Status: corev1.ConditionFalse,
 							},
 							// Note that Ready is here because when the condition is marked False, duck
 							// automatically sets Ready to false.
 							{
-								Type:   NatssChannelConditionReady,
+								Type:   NatsJetStreamChannelConditionReady,
 								Status: corev1.ConditionFalse,
 							},
 						},
@@ -361,11 +384,11 @@ func TestNatssChannelStatus_SetAddressable(t *testing.T) {
 					},
 					Status: duckv1.Status{
 						Conditions: []apis.Condition{{
-							Type:   NatssChannelConditionAddressable,
+							Type:   NatsJetStreamChannelConditionAddressable,
 							Status: corev1.ConditionTrue,
 						}, {
 							// Ready unknown comes from other dependent conditions via MarkTrue.
-							Type:   NatssChannelConditionReady,
+							Type:   NatsJetStreamChannelConditionReady,
 							Status: corev1.ConditionUnknown,
 						}},
 					},
