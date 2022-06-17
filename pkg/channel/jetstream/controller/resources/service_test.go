@@ -19,8 +19,9 @@ package resources
 import (
 	"errors"
 	"fmt"
-	"knative.dev/eventing-natss/pkg/channel/jetstream"
 	"testing"
+
+	"knative.dev/eventing-natss/pkg/channel/jetstream"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -38,7 +39,7 @@ const (
 )
 
 func TestMakeChannelServiceAddress(t *testing.T) {
-	if want, got := "my-test-nc-kn-channel", MakeJSMChannelServiceName(ncName); want != got {
+	if want, got := "my-test-nc-kn-jsm-channel", MakeJSMChannelServiceName(ncName); want != got {
 		t.Errorf("Want: %q got %q", want, got)
 	}
 }
@@ -56,7 +57,7 @@ func TestMakeService(t *testing.T) {
 			Kind:       "Service",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-kn-channel", ncName),
+			Name:      fmt.Sprintf("%s-kn-jsm-channel", ncName),
 			Namespace: testNS,
 			Labels: map[string]string{
 				MessagingRoleLabel: MessagingRole,
@@ -99,7 +100,7 @@ func TestMakeServiceWithExternal(t *testing.T) {
 			Kind:       "Service",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-kn-channel", ncName),
+			Name:      fmt.Sprintf("%s-kn-jsm-channel", ncName),
 			Namespace: testNS,
 			Labels: map[string]string{
 				MessagingRoleLabel: MessagingRole,
