@@ -51,9 +51,7 @@ const (
 
 	dispatcherDeploymentCreated     = "DispatcherDeploymentCreated"
 	dispatcherDeploymentFailed      = "DispatcherDeploymentFailed"
-	dispatcherDeploymentNotFound    = "DispatcherDeploymentDoesNotExist"
 	dispatcherDeploymentUpdated     = "DispatcherDeploymentUpdated"
-	dispatcherEndpointsFailed       = "DispatcherEndpointsFailed"
 	dispatcherEndpointsNotFound     = "DispatcherEndpointsDoesNotExist"
 	dispatcherRoleBindingCreated    = "DispatcherRoleBindingCreated"
 	dispatcherRoleBindingFailed     = "DispatcherRoleBindingFailed"
@@ -61,9 +59,7 @@ const (
 	dispatcherServiceAccountFailed  = "DispatcherServiceAccountFailed"
 	dispatcherServiceCreated        = "DispatcherServiceCreated"
 	dispatcherServiceFailed         = "DispatcherServiceFailed"
-	dispatcherServiceNotFound       = "DispatcherServiceDoesNotExist"
 	dispatcherServiceUpdated        = "DispatcherServiceUpdated"
-	channelServiceFailed            = "ChannelServiceFailed"
 	natsJetStreamChannelReconciled  = "NatsJetStreamChannelReconciled"
 )
 
