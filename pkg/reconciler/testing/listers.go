@@ -27,7 +27,6 @@ import (
 	rbacv1listers "k8s.io/client-go/listers/rbac/v1"
 	"k8s.io/client-go/tools/cache"
 
-	fakeeventingclientset "knative.dev/eventing/pkg/client/clientset/versioned/fake"
 	fakeeventsclientset "knative.dev/eventing/pkg/client/clientset/versioned/fake"
 	"knative.dev/pkg/reconciler/testing"
 
@@ -42,7 +41,6 @@ var clientSetSchemes = []func(*runtime.Scheme) error{
 	fakekubeclientset.AddToScheme,
 	fakeeventsclientset.AddToScheme,
 	fakenatsslientset.AddToScheme,
-	fakeeventingclientset.AddToScheme,
 }
 
 type Listers struct {
@@ -78,7 +76,7 @@ func (l *Listers) GetNatssObjects() []runtime.Object {
 }
 
 func (l *Listers) GetEventingObjects() []runtime.Object {
-	return l.sorter.ObjectsForSchemeFunc(fakeeventingclientset.AddToScheme)
+	return l.sorter.ObjectsForSchemeFunc(fakeeventsclientset.AddToScheme)
 }
 
 func (l *Listers) GetEventsObjects() []runtime.Object {

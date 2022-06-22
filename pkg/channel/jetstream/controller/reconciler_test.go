@@ -18,14 +18,25 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgotesting "k8s.io/client-go/testing"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	"knative.dev/pkg/kmeta"
+	"knative.dev/pkg/network"
 
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	. "knative.dev/pkg/reconciler/testing"
 
+	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 	"knative.dev/eventing-natss/pkg/apis/messaging/v1beta1"
+	"knative.dev/eventing-natss/pkg/channel/jetstream/controller/resources"
 	"knative.dev/eventing-natss/pkg/client/clientset/versioned/scheme"
 	fakeclientset "knative.dev/eventing-natss/pkg/client/injection/client/fake"
 	"knative.dev/eventing-natss/pkg/client/injection/reconciler/messaging/v1alpha1/natsjetstreamchannel"
@@ -41,27 +52,63 @@ func init() {
 const (
 	testNS                   = "test-namespace"
 	ncName                   = "test-nc"
+	dispatcherImage          = "test-image"
 	dispatcherDeploymentName = "test-deployment"
 	dispatcherServiceName    = "test-service"
+	dispatcherServiceAccount = "test-service-account"
 	channelServiceAddress    = "test-nc-kn-channel.test-namespace.svc.cluster.local"
 )
 
 func TestAllCases(t *testing.T) {
-	// ncKey := testNS + "/" + ncName
+	ncKey := testNS + "/" + ncName
 	table := TableTest{
 		{
 			Name: "bad workqueue key",
 			// Make sure Reconcile handles bad keys.
 			Key: "too/many/parts",
+		}, {
+			Name: "key not found",
+			// Make sure Reconcile handles good keys that don't exist.
+			Key: "foo/not-found",
+		}, {
+			Name: "deleting",
+			Key:  ncKey,
+			Objects: []runtime.Object{
+				reconciletesting.NewNatsJetStreamChannel(ncName, testNS,
+					reconciletesting.WithNatsJetStreamInitChannelConditions,
+					reconciletesting.WithNatsJetStreamChannelDeleted),
+			},
+			WantErr: false,
+		}, {
+			Name: "deployment does not exist",
+			Key:  ncKey,
+			Objects: []runtime.Object{
+				reconciletesting.NewNatsJetStreamChannel(ncName, testNS),
+			},
+			WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+				Object: reconciletesting.NewNatsJetStreamChannel(ncName, testNS,
+          reconciletesting.WithNatsJetStreamChannelServiceNotReady()
+					// reconciletesting.WithNatsJetStreamInitChannelConditions,
+					// reconciletesting.WithNatsJetStreamChannelDeploymentNotReady(dispatcherDeploymentNotFound, "Dispatcher Deployment does not exist"),
+					// reconciletesting.WithNatsJetStreamChannelChannelServiceReady(),
+					// reconciletesting.WithNatsJetStreamChannelAddress(channelServiceAddress),
+					// reconciletesting.JetStreamAddressable(),
+					// reconciletesting.WithNatsJetStreamChannelServiceNotReady(dispatcherServiceNotFound, "Dispatcher Service does not exist"),
+					// reconciletesting.WithNatsJetStreamChannelEndpointsNotReady(dispatcherEndpointsNotFound, "Dispatcher Endpoints does not exist"),
+				),
+			}},
+			WantCreates: []runtime.Object{
+				// makeChannelService(reconciletesting.NewNatsJetStreamChannel(ncName, testNS)),
+			},
 		},
 	}
 
 	table.Test(t, reconciletesting.MakeFactory(func(ctx context.Context, listers *reconciletesting.Listers) controller.Reconciler {
 		r := &Reconciler{
-			kubeClientSet:            nil,
-			systemNamespace:          "",
-			dispatcherImage:          "",
-			dispatcherServiceAccount: "",
+			kubeClientSet:            kubeclient.Get(ctx),
+			systemNamespace:          testNS,
+			dispatcherImage:          dispatcherImage,
+			dispatcherServiceAccount: dispatcherServiceAccount,
 			deploymentLister:         listers.GetDeploymentLister(),
 			serviceLister:            listers.GetServiceLister(),
 			endpointsLister:          listers.GetEndpointsLister(),
@@ -75,4 +122,27 @@ func TestAllCases(t *testing.T) {
 			controller.GetEventRecorder(ctx),
 			r)
 	}))
+}
+
+func makeChannelService(nc *v1alpha1.NatsJetStreamChannel) *corev1.Service {
+	return &corev1.Service{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Service",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNS,
+			Name:      fmt.Sprintf("%s-kn-channel", ncName),
+			Labels: map[string]string{
+				resources.MessagingRoleLabel: resources.MessagingRole,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*kmeta.NewControllerRef(nc),
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Type:         corev1.ServiceTypeExternalName,
+			ExternalName: network.GetServiceHostname(dispatcherServiceName, testNS),
+		},
+	}
 }
