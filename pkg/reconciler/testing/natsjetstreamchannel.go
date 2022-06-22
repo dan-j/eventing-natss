@@ -79,6 +79,12 @@ func WithNatsJetStreamChannelDeleted(nc *v1alpha1.NatsJetStreamChannel) {
 	nc.ObjectMeta.SetDeletionTimestamp(&deleteTime)
 }
 
+func WithNatsJetStreamChannelDispatcherReady() NatsJetStreamChannelOption {
+	return func(nc *v1alpha1.NatsJetStreamChannel) {
+		nc.Status.MarkDispatcherTrue()
+	}
+}
+
 func WithNatsJetStreamChannelDeploymentNotReady(reason, message string) NatsJetStreamChannelOption {
 	return func(nc *v1alpha1.NatsJetStreamChannel) {
 		nc.Status.MarkDispatcherFailed(reason, message)

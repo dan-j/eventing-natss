@@ -97,6 +97,27 @@ func TestAllCases(t *testing.T) {
 				Eventf(v1.EventTypeNormal, dispatcherDeploymentCreated, "Dispatcher deployment created"),
 				Eventf(v1.EventTypeNormal, dispatcherServiceCreated, "Dispatcher service created"),
 			},
+		}, {
+			Name: "service does not exist",
+			Key:  ncKey,
+			Objects: []runtime.Object{
+				makeReadyDispatcherDeployment(),
+				reconciletesting.NewNatsJetStreamChannel(ncName, testNS),
+			},
+			WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+				Object: reconciletesting.NewNatsJetStreamChannel(ncName, testNS,
+					reconciletesting.WithNatsJetStreamInitChannelConditions,
+					reconciletesting.WithNatsJetStreamChannelDispatcherReady(),
+					reconciletesting.WithNatsJetStreamChannelEndpointsNotReady(dispatcherEndpointsNotFound, "Dispatcher Endpoints does not exist"),
+					reconciletesting.WithNatsJetStreamChannelServiceReady(),
+				),
+			}},
+			WantCreates: []runtime.Object{
+				makeDispatcherService(),
+			},
+			WantEvents: []string{
+				Eventf(v1.EventTypeNormal, dispatcherServiceCreated, "Dispatcher service created"),
+			},
 		},
 	}
 
@@ -130,6 +151,12 @@ func makeDispatcherDeployment() *appsv1.Deployment {
 		ServiceAccount:      dispatcherServiceAccount,
 		OwnerRef:            metav1.OwnerReference{}, //TODO: Make this work
 	}).Build()
+}
+
+func makeReadyDispatcherDeployment() *appsv1.Deployment {
+	d := makeDispatcherDeployment()
+	d.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentAvailable, Status: v1.ConditionTrue}}
+	return d
 }
 
 func makeDispatcherService() *v1.Service {
