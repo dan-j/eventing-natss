@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -26,12 +27,15 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgotesting "k8s.io/client-go/testing"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	"knative.dev/pkg/kmeta"
+	"knative.dev/pkg/network"
 
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	. "knative.dev/pkg/reconciler/testing"
 
+	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 	"knative.dev/eventing-natss/pkg/apis/messaging/v1beta1"
 	"knative.dev/eventing-natss/pkg/channel/jetstream/controller/resources"
 	"knative.dev/eventing-natss/pkg/client/clientset/versioned/scheme"
@@ -51,9 +55,9 @@ const (
 	ncName                   = "test-nc"
 	dispatcherImage          = "test-image"
 	dispatcherDeploymentName = "jetstream-ch-dispatcher"
-	dispatcherServiceName    = "test-service"
+	dispatcherServiceName    = "jetstream-ch-dispatcher"
 	dispatcherServiceAccount = "test-service-account"
-	channelServiceAddress    = "test-nc-kn-channel.test-namespace.svc.cluster.local"
+	channelServiceAddress    = "test-nc-kn-jsm-channel.test-namespace.svc.cluster.local"
 )
 
 func TestAllCases(t *testing.T) {
@@ -118,6 +122,45 @@ func TestAllCases(t *testing.T) {
 			WantEvents: []string{
 				Eventf(v1.EventTypeNormal, dispatcherServiceCreated, "Dispatcher service created"),
 			},
+		}, {
+			Name: "Endpoints does not exist",
+			Key:  ncKey,
+			Objects: []runtime.Object{
+				makeReadyDispatcherDeployment(),
+				makeDispatcherService(),
+				reconciletesting.NewNatsJetStreamChannel(ncName, testNS),
+			},
+			WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+				Object: reconciletesting.NewNatsJetStreamChannel(ncName, testNS,
+					reconciletesting.WithNatsJetStreamInitChannelConditions,
+					reconciletesting.WithNatsJetStreamChannelDispatcherReady(),
+					reconciletesting.WithNatsJetStreamChannelEndpointsNotReady(dispatcherEndpointsNotFound, "Dispatcher Endpoints does not exist"),
+					reconciletesting.WithNatsJetStreamChannelServiceReady(),
+				),
+			}},
+		}, {
+			Name: "Works",
+			Key:  ncKey,
+			Objects: []runtime.Object{
+				makeReadyDispatcherDeployment(),
+				makeDispatcherService(),
+				makeReadyEndpoints(),
+				reconciletesting.NewNatsJetStreamChannel(ncName, testNS),
+			},
+			WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+				Object: reconciletesting.NewNatsJetStreamChannel(ncName, testNS,
+					reconciletesting.WithNatsJetStreamInitChannelConditions,
+					reconciletesting.WithNatsJetStreamChannelAddress(channelServiceAddress),
+					reconciletesting.JetStreamAddressable(),
+					reconciletesting.WithNatsJetStreamChannelDispatcherReady(),
+					reconciletesting.WithNatsJetStreamChannelEndpointsReady(),
+					reconciletesting.WithNatsJetStreamChannelServiceReady(),
+					reconciletesting.WithNatsJetStreamChannelChannelServiceReady(),
+				),
+			}},
+      WantCreates: []runtime.Object{
+        makeChannelService(reconciletesting.NewNatsJetStreamChannel(ncName, testNS)),
+      },
 		},
 	}
 
@@ -153,6 +196,25 @@ func makeDispatcherDeployment() *appsv1.Deployment {
 	}).Build()
 }
 
+func makeEmptyEndpoints() *v1.Endpoints {
+	return &v1.Endpoints{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Endpoints",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNS,
+			Name:      dispatcherServiceName,
+		},
+	}
+}
+
+func makeReadyEndpoints() *v1.Endpoints {
+	e := makeEmptyEndpoints()
+	e.Subsets = []v1.EndpointSubset{{Addresses: []v1.EndpointAddress{{IP: "1.1.1.1"}}}}
+	return e
+}
+
 func makeReadyDispatcherDeployment() *appsv1.Deployment {
 	d := makeDispatcherDeployment()
 	d.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentAvailable, Status: v1.ConditionTrue}}
@@ -163,4 +225,27 @@ func makeDispatcherService() *v1.Service {
 	return resources.NewDispatcherServiceBuilder().WithArgs(&resources.DispatcherServiceArgs{
 		DispatcherNamespace: testNS,
 	}).Build()
+}
+
+func makeChannelService(nc *v1alpha1.NatsJetStreamChannel) *v1.Service {
+	return &v1.Service{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Service",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: testNS,
+			Name:      fmt.Sprintf("%s-kn-jsm-channel", ncName),
+			Labels: map[string]string{
+				resources.MessagingRoleLabel: resources.MessagingRole,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				*kmeta.NewControllerRef(nc),
+			},
+		},
+		Spec: v1.ServiceSpec{
+			Type:         v1.ServiceTypeExternalName,
+			ExternalName: network.GetServiceHostname(dispatcherServiceName, testNS),
+		},
+	}
 }
