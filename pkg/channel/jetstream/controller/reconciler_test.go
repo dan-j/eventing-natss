@@ -139,7 +139,7 @@ func TestAllCases(t *testing.T) {
 				),
 			}},
 		}, {
-			Name: "Works",
+			Name: "Works, creates a new channel",
 			Key:  ncKey,
 			Objects: []runtime.Object{
 				makeReadyDispatcherDeployment(),
@@ -158,10 +158,14 @@ func TestAllCases(t *testing.T) {
 					reconciletesting.WithNatsJetStreamChannelChannelServiceReady(),
 				),
 			}},
-      WantCreates: []runtime.Object{
-        makeChannelService(reconciletesting.NewNatsJetStreamChannel(ncName, testNS)),
-      },
-		},
+			WantCreates: []runtime.Object{
+				makeChannelService(reconciletesting.NewNatsJetStreamChannel(ncName, testNS)),
+			},
+    }, {
+      Name: "Works, channel exists",
+    }, {
+      Name: "channel does not exist, fails to create",
+    },
 	}
 
 	table.Test(t, reconciletesting.MakeFactory(func(ctx context.Context, listers *reconciletesting.Listers) controller.Reconciler {
