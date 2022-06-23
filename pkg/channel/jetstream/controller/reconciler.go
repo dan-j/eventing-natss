@@ -61,6 +61,7 @@ const (
 	dispatcherServiceFailed         = "DispatcherServiceFailed"
 	dispatcherServiceUpdated        = "DispatcherServiceUpdated"
 	natsJetStreamChannelReconciled  = "NatsJetStreamChannelReconciled"
+	channelServiceFailed            = "ChannelServiceFailed"
 )
 
 func newReconciledNormal(namespace, name string) reconciler.Event {

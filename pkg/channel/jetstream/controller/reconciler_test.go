@@ -161,11 +161,28 @@ func TestAllCases(t *testing.T) {
 			WantCreates: []runtime.Object{
 				makeChannelService(reconciletesting.NewNatsJetStreamChannel(ncName, testNS)),
 			},
-    }, {
-      Name: "Works, channel exists",
-    }, {
-      Name: "channel does not exist, fails to create",
-    },
+		}, {
+			Name: "Works, channel exists",
+			Key:  ncKey,
+			Objects: []runtime.Object{
+				makeReadyDispatcherDeployment(),
+				makeDispatcherService(),
+				makeReadyEndpoints(),
+				reconciletesting.NewNatsJetStreamChannel(ncName, testNS),
+				makeChannelService(reconciletesting.NewNatsJetStreamChannel(ncName, testNS)),
+			},
+			WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+				Object: reconciletesting.NewNatsJetStreamChannel(ncName, testNS,
+					reconciletesting.WithNatsJetStreamInitChannelConditions,
+					reconciletesting.WithNatsJetStreamChannelAddress(channelServiceAddress),
+					reconciletesting.JetStreamAddressable(),
+					reconciletesting.WithNatsJetStreamChannelDispatcherReady(),
+					reconciletesting.WithNatsJetStreamChannelEndpointsReady(),
+					reconciletesting.WithNatsJetStreamChannelServiceReady(),
+					reconciletesting.WithNatsJetStreamChannelChannelServiceReady(),
+				),
+			}},
+		},
 	}
 
 	table.Test(t, reconciletesting.MakeFactory(func(ctx context.Context, listers *reconciletesting.Listers) controller.Reconciler {
