@@ -133,6 +133,18 @@ func WithNatsJetStreamChannelEndpointsReady() NatsJetStreamChannelOption {
 	}
 }
 
+func WithNatsJetStreamChannelStreamNotReady(reason, message string) NatsJetStreamChannelOption {
+	return func(nc *v1alpha1.NatsJetStreamChannel) {
+		nc.Status.MarkStreamFailed(reason, message)
+	}
+}
+
+func WithNatsJetStreamChannelStreamReady() NatsJetStreamChannelOption {
+	return func(nc *v1alpha1.NatsJetStreamChannel) {
+		nc.Status.MarkStreamTrue()
+	}
+}
+
 func WithNatsJetStreamChannelSubscriber(t *testing.T, subscriberURI string) NatsJetStreamChannelOption {
 	s, err := apis.ParseURL(subscriberURI)
 	if err != nil {
