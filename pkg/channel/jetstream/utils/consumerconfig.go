@@ -20,42 +20,43 @@ import (
 	"math"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rickb777/date/period"
-	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 	v1 "knative.dev/eventing/pkg/apis/duck/v1"
 	"knative.dev/eventing/pkg/kncloudevents"
+
+	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 )
 
-func ConvertDeliverPolicy(in v1alpha1.DeliverPolicy, def nats.DeliverPolicy) nats.DeliverPolicy {
+func ConvertDeliverPolicy(in v1alpha1.DeliverPolicy, def jetstream.DeliverPolicy) jetstream.DeliverPolicy {
 	switch in {
 	case v1alpha1.AllDeliverPolicy:
-		return nats.DeliverAllPolicy
+		return jetstream.DeliverAllPolicy
 	case v1alpha1.LastDeliverPolicy:
-		return nats.DeliverLastPolicy
+		return jetstream.DeliverLastPolicy
 	case v1alpha1.NewDeliverPolicy:
-		return nats.DeliverNewPolicy
+		return jetstream.DeliverNewPolicy
 	case v1alpha1.ByStartSequenceDeliverPolicy:
-		return nats.DeliverByStartSequencePolicy
+		return jetstream.DeliverByStartSequencePolicy
 	case v1alpha1.ByStartTimeDeliverPolicy:
-		return nats.DeliverByStartTimePolicy
+		return jetstream.DeliverByStartTimePolicy
 	}
 
 	return def
 }
 
-func ConvertReplayPolicy(in v1alpha1.ReplayPolicy, def nats.ReplayPolicy) nats.ReplayPolicy {
+func ConvertReplayPolicy(in v1alpha1.ReplayPolicy, def jetstream.ReplayPolicy) jetstream.ReplayPolicy {
 	switch in {
 	case v1alpha1.InstantReplayPolicy:
-		return nats.ReplayInstantPolicy
+		return jetstream.ReplayInstantPolicy
 	case v1alpha1.OriginalReplayPolicy:
-		return nats.ReplayOriginalPolicy
+		return jetstream.ReplayOriginalPolicy
 	}
 
 	return def
 }
 
-func CalcRequestDeadline(msg *nats.Msg, ackWait time.Duration) time.Time {
+func CalcRequestDeadline(msg jetstream.Msg, ackWait time.Duration) time.Time {
 	const jitter = time.Millisecond * 200
 
 	// if previous deliveries were explicitly nacked earlier than the deadline, then our actual deadline will be earlier
@@ -80,7 +81,7 @@ func CalcRequestDeadline(msg *nats.Msg, ackWait time.Duration) time.Time {
 	return deadline
 }
 
-func CalcRequestTimeout(msg *nats.Msg, ackWait time.Duration) time.Duration {
+func CalcRequestTimeout(msg jetstream.Msg, ackWait time.Duration) time.Duration {
 	const jitter = time.Millisecond * 200
 
 	// if previous deliveries were explicitly nacked earlier than the deadline, then our actual deadline will be earlier

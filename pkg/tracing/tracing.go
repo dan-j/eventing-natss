@@ -27,6 +27,8 @@ var (
 )
 
 func SerializeTraceTransformers(spanContext trace.SpanContext) []binding.Transformer {
+	// TODO: see the TODO in Dispatcher.messageReceiver, but I believe these should only be set if
+	//  the extensions aren't already set.
 	tp, ts := format.SpanContextToHeaders(spanContext)
 	return []binding.Transformer{
 		keyValTransformer(traceParentHeader, tp),

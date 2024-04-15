@@ -17,8 +17,9 @@ limitations under the License.
 package dispatcher
 
 import (
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"k8s.io/apimachinery/pkg/types"
+
 	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 
 	"knative.dev/eventing/pkg/channel"
@@ -37,11 +38,10 @@ type (
 type EnqueueFunc func(ref types.NamespacedName)
 
 type NatsDispatcherArgs struct {
-	JetStream nats.JetStreamContext
+	JetStream jetstream.JetStream
 
-	SubjectFunc         StreamSubjectFunc
-	ConsumerNameFunc    ConsumerNameFunc
-	ConsumerSubjectFunc ConsumerSubjectFunc
+	SubjectFunc      StreamSubjectFunc
+	ConsumerNameFunc ConsumerNameFunc
 
 	PodName       string
 	ContainerName string
@@ -53,12 +53,13 @@ type ChannelConfig struct {
 	StreamName             string
 	ConsumerConfigTemplate *v1alpha1.ConsumerConfigTemplate
 	Subscriptions          []Subscription
+	Object                 *v1alpha1.NatsJetStreamChannel
 }
 
-func (cc ChannelConfig) SubscriptionsUIDs() []string {
-	res := make([]string, 0, len(cc.Subscriptions))
+func (cc ChannelConfig) SubscriptionsUIDs() []types.UID {
+	res := make([]types.UID, 0, len(cc.Subscriptions))
 	for _, s := range cc.Subscriptions {
-		res = append(res, string(s.UID))
+		res = append(res, s.UID)
 	}
 	return res
 }
@@ -80,8 +81,24 @@ const (
 	SubscriberStatusTypeSkipped
 	SubscriberStatusTypeUpToDate
 	SubscriberStatusTypeError
-	SubscriberStatusTypeDeleted
 )
+
+var (
+	subscriberStatusToString = map[SubscriberStatusType]string{
+		SubscriberStatusTypeCreated:  "created",
+		SubscriberStatusTypeSkipped:  "skipped",
+		SubscriberStatusTypeUpToDate: "up-to-date",
+		SubscriberStatusTypeError:    "error",
+	}
+)
+
+func (s SubscriberStatusType) String() string {
+	if s, ok := subscriberStatusToString[s]; ok {
+		return s
+	}
+
+	return "unknown"
+}
 
 type SubscriberStatus struct {
 	UID   types.UID

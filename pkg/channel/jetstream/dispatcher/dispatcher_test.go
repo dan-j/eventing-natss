@@ -20,26 +20,29 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
 	"knative.dev/eventing/pkg/channel/fanout"
 	"knative.dev/eventing/pkg/kncloudevents"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	dispatchertesting "knative.dev/eventing-natss/pkg/channel/jetstream/dispatcher/testing"
-	"knative.dev/eventing-natss/pkg/client/injection/client"
-	fakeclientset "knative.dev/eventing-natss/pkg/client/injection/client/fake"
-	reconcilertesting "knative.dev/eventing-natss/pkg/reconciler/testing"
 	fakeeventingclient "knative.dev/eventing/pkg/client/injection/client/fake"
 	fakekubeclient "knative.dev/pkg/client/injection/kube/client/fake"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	logtesting "knative.dev/pkg/logging/testing"
 
+	dispatchertesting "knative.dev/eventing-natss/pkg/channel/jetstream/dispatcher/testing"
+	"knative.dev/eventing-natss/pkg/client/injection/client"
+	fakeclientset "knative.dev/eventing-natss/pkg/client/injection/client/fake"
+	reconcilertesting "knative.dev/eventing-natss/pkg/reconciler/testing"
+
+	"knative.dev/eventing/pkg/channel"
+
 	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 	"knative.dev/eventing-natss/pkg/channel/jetstream/utils"
 	reconciletesting "knative.dev/eventing-natss/pkg/reconciler/testing"
-	"knative.dev/eventing/pkg/channel"
 )
 
 func TestDispatcher_RegisterChannelHost(t *testing.T) {
@@ -55,7 +58,7 @@ func TestDispatcher_RegisterChannelHost(t *testing.T) {
 }
 
 func TestDispatcher_ReconcileConsumers(t *testing.T) {
-	ctx := logging.WithLogger(context.Background(), logtesting.TestLogger(t))
+	ctx := logging.WithLogger(context.Background(), logtesting.TestLogger(t).WithOptions(zap.IncreaseLevel(zap.DebugLevel)))
 
 	s := dispatchertesting.RunBasicJetstreamServer()
 	defer dispatchertesting.ShutdownJSServerAndRemoveStorage(t, s)
@@ -83,12 +86,11 @@ func TestDispatcher_ReconcileConsumers(t *testing.T) {
 	})
 
 	d, err := NewDispatcher(ctx, NatsDispatcherArgs{
-		JetStream:           js,
-		SubjectFunc:         utils.PublishSubjectName,
-		ConsumerNameFunc:    utils.ConsumerName,
-		ConsumerSubjectFunc: utils.ConsumerSubjectName,
-		PodName:             "test",
-		ContainerName:       "test",
+		JetStream:        js,
+		SubjectFunc:      utils.PublishSubjectName,
+		ConsumerNameFunc: utils.ConsumerName,
+		PodName:          "test",
+		ContainerName:    "test",
 	})
 	require.NoError(t, err)
 
@@ -131,5 +133,6 @@ func createChannelConfig(nc *v1alpha1.NatsJetStreamChannel, subs ...Subscription
 		HostName:               "a.b.c.d",
 		ConsumerConfigTemplate: nc.Spec.ConsumerConfigTemplate,
 		Subscriptions:          subs,
+		Object:                 nc,
 	}
 }

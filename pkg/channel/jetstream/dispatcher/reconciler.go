@@ -20,9 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,10 +35,8 @@ import (
 	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
 
-	"knative.dev/eventing-natss/pkg/client/clientset/versioned"
-	commonerr "knative.dev/eventing-natss/pkg/common/error"
-
 	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
+	"knative.dev/eventing-natss/pkg/client/clientset/versioned"
 	jsmreconciler "knative.dev/eventing-natss/pkg/client/injection/reconciler/messaging/v1alpha1/natsjetstreamchannel"
 )
 
@@ -58,7 +55,7 @@ const (
 // - Creates a consumer for each .spec.subscribers[] and forwards events to the subscriber address
 type Reconciler struct {
 	clientSet  versioned.Interface
-	js         nats.JetStreamManager
+	js         jetstream.JetStream
 	dispatcher *Dispatcher
 
 	streamNameFunc   StreamNameFunc
@@ -86,6 +83,9 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, nc *v1alpha1.NatsJetStre
 	return r.reconcileSubscriberStatuses(ctx, nc)
 }
 
+// reconcileSubscriberStatuses keeps the NatsJetStreamChannel status up to date with the current
+// state of the JetStream Consumers. It does not mutate the JetStream system, this is the
+// responsibility of the Dispatcher.
 func (r *Reconciler) reconcileSubscriberStatuses(ctx context.Context, nc *v1alpha1.NatsJetStreamChannel) error {
 	logger := logging.FromContext(ctx)
 	after := nc.DeepCopy()
@@ -100,10 +100,10 @@ func (r *Reconciler) reconcileSubscriberStatuses(ctx context.Context, nc *v1alph
 			Ready:              corev1.ConditionUnknown,
 		}
 
-		_, err := r.js.ConsumerInfo(r.streamNameFunc(nc), r.consumerNameFunc(string(s.UID)))
+		_, err := r.js.Consumer(ctx, r.streamNameFunc(nc), r.consumerNameFunc(string(s.UID)))
 		if err != nil {
 			after.Status.Subscribers[i].Ready = corev1.ConditionFalse
-			if errors.Is(err, nats.ErrConsumerNotFound) {
+			if errors.Is(err, jetstream.ErrConsumerNotFound) {
 				after.Status.Subscribers[i].Message = "Consumer does not exist"
 			} else {
 				slog.Errorw("failed to retrieve ConsumerInfo", zap.Error(err))
@@ -162,7 +162,7 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, nc *v1alpha1.NatsJetStrea
 	logger.Debugw("FinalizeKind for channel", zap.String("channel", nc.Name))
 
 	defer func() {
-		if err2 := r.js.DeleteStream(r.streamNameFunc(nc)); err2 != nil {
+		if err2 := r.js.DeleteStream(ctx, r.streamNameFunc(nc)); err2 != nil {
 			if err == nil {
 				err = err2
 			} else {
@@ -203,8 +203,8 @@ func (r *Reconciler) reconcileStream(ctx context.Context, nc *v1alpha1.NatsJetSt
 	streamName := r.streamNameFunc(nc)
 	primarySubject := r.dispatcher.publishSubjectFunc(nc.Namespace, nc.Name)
 
-	existing, err := r.js.StreamInfo(streamName)
-	if err != nil && !errors.Is(err, nats.ErrStreamNotFound) {
+	existing, err := r.js.Stream(ctx, streamName)
+	if err != nil && !errors.Is(err, jetstream.ErrStreamNotFound) {
 		logger.Errorw("failed to check current stream info")
 		return err
 	}
@@ -214,12 +214,19 @@ func (r *Reconciler) reconcileStream(ctx context.Context, nc *v1alpha1.NatsJetSt
 
 	// if stream is existing then it may return error and prevent update of subscriptions
 	if isCreating {
-		// AddStream is idempotent if the config is identical to that on the server
-		info, err := r.js.AddStream(streamConfig)
+		stream, err := r.js.CreateStream(ctx, streamConfig)
 		if err != nil {
 			logger.Errorw("failed to add stream")
 			controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeWarning, ReasonJetstreamStreamFailed, err.Error())
 			nc.Status.MarkStreamFailed("DispatcherCreateStreamFailed", "Failed to create JetStream stream")
+			return err
+		}
+
+		info, err := stream.Info(ctx)
+		if err != nil {
+			logger.Errorw("failed to get stream info")
+			controller.GetEventRecorder(ctx).Event(nc, corev1.EventTypeWarning, ReasonJetstreamStreamFailed, err.Error())
+			nc.Status.MarkStreamFailed("DispatcherGetStreamInfoFailed", "Failed to get JetStream stream info")
 			return err
 		}
 
@@ -253,21 +260,6 @@ func (r *Reconciler) syncChannel(ctx context.Context, nc *v1alpha1.NatsJetStream
 	if err != nil {
 		logger.Errorw("failure occurred during reconcile consumers", zap.Error(err))
 
-		if errs, ok := err.(commonerr.SubscriberErrors); ok {
-			for _, subErr := range errs {
-				controller.GetEventRecorder(ctx).Event(
-					nc,
-					corev1.EventTypeWarning,
-					ReasonJetstreamConsumerFailed,
-					fmt.Sprintf("Failed to create subscriber for UID: %s: %s", subErr.UID, subErr.Err.Error()),
-				)
-			}
-
-			// don't let the controller report extra information due to subscriber error, just requeue in 10 seconds.
-			return controller.NewRequeueAfter(10 * time.Second)
-		}
-
-		// if an unexpected err occurred, let the controller decide how
 		return err
 	}
 
@@ -284,6 +276,7 @@ func (r *Reconciler) newConfigFromChannel(nc *v1alpha1.NatsJetStreamChannel) Cha
 		StreamName:             r.streamNameFunc(nc),
 		HostName:               nc.Status.Address.URL.Host,
 		ConsumerConfigTemplate: nc.Spec.ConsumerConfigTemplate,
+		Object:                 nc,
 	}
 	if nc.Spec.SubscribableSpec.Subscribers != nil {
 		newSubs := make([]Subscription, len(nc.Spec.SubscribableSpec.Subscribers))

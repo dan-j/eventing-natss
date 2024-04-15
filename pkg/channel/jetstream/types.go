@@ -16,7 +16,26 @@ limitations under the License.
 
 package jetstream
 
+import "knative.dev/pkg/controller"
+
 const (
 	ControllerName = "jetstream-ch-controller"
 	DispatcherName = "jetstream-ch-dispatcher"
+
+	finalizerPrefix = "natsjetstreamchannels.messaging.knative.dev/"
+
+	ControllerFinalizer = finalizerPrefix + ControllerName
+	DispatcherFinalizer = finalizerPrefix + DispatcherName
 )
+
+func WithControllerFinalizer(*controller.Impl) controller.Options {
+	return controller.Options{
+		FinalizerName: ControllerFinalizer,
+	}
+}
+
+func WithDispatcherFinalizer(*controller.Impl) controller.Options {
+	return controller.Options{
+		FinalizerName: DispatcherFinalizer,
+	}
+}

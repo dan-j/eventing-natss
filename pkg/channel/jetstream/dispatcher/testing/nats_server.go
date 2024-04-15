@@ -16,6 +16,7 @@ limitations under the License.
 package testing
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -23,13 +24,35 @@ import (
 	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 func RunBasicJetstreamServer() *server.Server {
 	opts := natsserver.DefaultTestOptions
 	opts.Port = -1
 	opts.JetStream = true
-	return natsserver.RunServer(&opts)
+	// opts.NoLog = false
+	// opts.Debug = true
+	// opts.Trace = true
+
+	s, err := server.NewServer(&opts)
+	if err != nil || s == nil {
+		panic(fmt.Sprintf("No NATS Server object returned: %v", err))
+	}
+
+	if !opts.NoLog {
+		s.ConfigureLogger()
+	}
+
+	// Run server in Go routine.
+	go s.Start()
+
+	// Wait for accept loop(s) to be started
+	if !s.ReadyForConnections(10 * time.Second) {
+		panic("Unable to start NATS Server in Go Routine")
+	}
+
+	return s
 }
 
 func ShutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
@@ -47,10 +70,10 @@ func ShutdownJSServerAndRemoveStorage(t *testing.T, s *server.Server) {
 	s.WaitForShutdown()
 }
 
-func JsClient(t *testing.T, s *server.Server, opts ...nats.Option) (*nats.Conn, nats.JetStreamContext) {
+func JsClient(t *testing.T, s *server.Server, opts ...nats.Option) (*nats.Conn, jetstream.JetStream) {
 	t.Helper()
 	nc := NatsClient(t, s, opts...)
-	js, err := nc.JetStream(nats.MaxWait(10 * time.Second))
+	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatalf("Unexpected error getting JetStream context: %v", err)
 	}

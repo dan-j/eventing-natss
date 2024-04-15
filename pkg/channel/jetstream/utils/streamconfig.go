@@ -19,57 +19,58 @@ package utils
 import (
 	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+
 	"knative.dev/eventing-natss/pkg/apis/messaging/v1alpha1"
 )
 
-func ConvertRetentionPolicy(in v1alpha1.RetentionPolicy, def nats.RetentionPolicy) nats.RetentionPolicy {
+func ConvertRetentionPolicy(in v1alpha1.RetentionPolicy, def jetstream.RetentionPolicy) jetstream.RetentionPolicy {
 	switch in {
 	case v1alpha1.LimitsRetentionPolicy:
-		return nats.LimitsPolicy
+		return jetstream.LimitsPolicy
 	case v1alpha1.WorkRetentionPolicy:
-		return nats.WorkQueuePolicy
+		return jetstream.WorkQueuePolicy
 	case v1alpha1.InterestRetentionPolicy:
-		return nats.InterestPolicy
+		return jetstream.InterestPolicy
 	}
 
 	return def
 }
 
-func ConvertDiscardPolicy(in v1alpha1.DiscardPolicy, def nats.DiscardPolicy) nats.DiscardPolicy {
+func ConvertDiscardPolicy(in v1alpha1.DiscardPolicy, def jetstream.DiscardPolicy) jetstream.DiscardPolicy {
 	switch in {
 	case v1alpha1.OldDiscardPolicy:
-		return nats.DiscardOld
+		return jetstream.DiscardOld
 	case v1alpha1.NewDiscardPolicy:
-		return nats.DiscardNew
+		return jetstream.DiscardNew
 	}
 
 	return def
 }
 
-func ConvertStorage(in v1alpha1.Storage, def nats.StorageType) nats.StorageType {
+func ConvertStorage(in v1alpha1.Storage, def jetstream.StorageType) jetstream.StorageType {
 	switch in {
 	case v1alpha1.FileStorage:
-		return nats.FileStorage
+		return jetstream.FileStorage
 	case v1alpha1.MemoryStorage:
-		return nats.MemoryStorage
+		return jetstream.MemoryStorage
 	}
 
 	return def
 }
 
-func ConvertPlacement(in *v1alpha1.StreamPlacement) *nats.Placement {
+func ConvertPlacement(in *v1alpha1.StreamPlacement) *jetstream.Placement {
 	if in == nil {
 		return nil
 	}
 
-	return &nats.Placement{
+	return &jetstream.Placement{
 		Cluster: in.Cluster,
 		Tags:    in.Tags,
 	}
 }
 
-func ConvertStreamSource(in *v1alpha1.StreamSource) *nats.StreamSource {
+func ConvertStreamSource(in *v1alpha1.StreamSource) *jetstream.StreamSource {
 	if in == nil {
 		return nil
 	}
@@ -79,7 +80,7 @@ func ConvertStreamSource(in *v1alpha1.StreamSource) *nats.StreamSource {
 		startTime = &in.OptStartTime.Time
 	}
 
-	return &nats.StreamSource{
+	return &jetstream.StreamSource{
 		Name:          in.Name,
 		OptStartSeq:   in.OptStartSeq,
 		OptStartTime:  startTime,
@@ -87,12 +88,12 @@ func ConvertStreamSource(in *v1alpha1.StreamSource) *nats.StreamSource {
 	}
 }
 
-func ConvertStreamSources(in []v1alpha1.StreamSource) []*nats.StreamSource {
+func ConvertStreamSources(in []v1alpha1.StreamSource) []*jetstream.StreamSource {
 	if in == nil {
 		return nil
 	}
 
-	arr := make([]*nats.StreamSource, len(in))
+	arr := make([]*jetstream.StreamSource, len(in))
 	for i, source := range in {
 		arr[i] = ConvertStreamSource(&source)
 	}

@@ -21,11 +21,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"k8s.io/apimachinery/pkg/types"
 	eventingduckv1 "knative.dev/eventing/pkg/apis/duck/v1"
 	"knative.dev/pkg/apis"
 
-	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +34,7 @@ import (
 	"knative.dev/pkg/logging"
 	. "knative.dev/pkg/reconciler/testing"
 
+	pkgjetstream "knative.dev/eventing-natss/pkg/channel/jetstream"
 	dispatchertesting "knative.dev/eventing-natss/pkg/channel/jetstream/dispatcher/testing"
 	"knative.dev/eventing-natss/pkg/channel/jetstream/utils"
 	"knative.dev/eventing-natss/pkg/client/injection/client"
@@ -47,6 +48,8 @@ const (
 
 	twoSubscriberPatch    = `[{"op":"add","path":"/status/subscribers","value":[{"observedGeneration":1,"ready":"True","uid":"2f9b5e8e-deb6-11e8-9f32-f2801f1b9fd1"},{"observedGeneration":2,"ready":"True","uid":"34c5aec8-deb6-11e8-9f32-f2801f1b9fd1"}]}]`
 	channelServiceAddress = "test-nc-kn-jsm-channel.test-namespace.svc.cluster.local"
+
+	legacyFinalizerName = "natsjetstreamchannels.messaging.knative.dev"
 )
 
 var (
@@ -140,12 +143,11 @@ func TestAllCases(t *testing.T) {
 		_, js := dispatchertesting.JsClient(t, s)
 		return createReconciler(ctx, l, js, func() *Dispatcher {
 			d, err := NewDispatcher(ctx, NatsDispatcherArgs{
-				JetStream:           js,
-				SubjectFunc:         utils.PublishSubjectName,
-				ConsumerNameFunc:    utils.ConsumerName,
-				ConsumerSubjectFunc: utils.ConsumerSubjectName,
-				PodName:             "test",
-				ContainerName:       "test",
+				JetStream:        js,
+				SubjectFunc:      utils.PublishSubjectName,
+				ConsumerNameFunc: utils.ConsumerName,
+				PodName:          "test",
+				ContainerName:    "test",
 			})
 			require.NoError(t, err)
 			return d
@@ -154,7 +156,7 @@ func TestAllCases(t *testing.T) {
 }
 
 func makeFinalizerPatch(namespace, name string) clientgotesting.PatchActionImpl {
-	return makePatch(namespace, name, `{"metadata":{"finalizers":["`+finalizerName+`"],"resourceVersion":""}}`)
+	return makePatch(namespace, name, `{"metadata":{"finalizers":["`+pkgjetstream.DispatcherFinalizer+`"],"resourceVersion":""}}`)
 }
 
 func makePatch(namespace, name, patch string) clientgotesting.PatchActionImpl {
@@ -167,7 +169,7 @@ func makePatch(namespace, name, patch string) clientgotesting.PatchActionImpl {
 	}
 }
 
-func createReconciler(ctx context.Context, listers *reconciletesting.Listers, js nats.JetStreamManager, dispatcherFactory func() *Dispatcher) controller.Reconciler {
+func createReconciler(ctx context.Context, listers *reconciletesting.Listers, js jetstream.JetStream, dispatcherFactory func() *Dispatcher) controller.Reconciler {
 	return natsjschannelreconciler.NewReconciler(
 		ctx,
 		logging.FromContext(ctx),
@@ -182,7 +184,7 @@ func createReconciler(ctx context.Context, listers *reconciletesting.Listers, js
 			consumerNameFunc: utils.ConsumerName,
 		},
 		controller.Options{
-			FinalizerName: "jetstream-ch-dispatcher",
+			FinalizerName: pkgjetstream.DispatcherFinalizer,
 		},
 	)
 }

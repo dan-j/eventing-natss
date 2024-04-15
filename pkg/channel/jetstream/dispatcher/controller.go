@@ -20,15 +20,18 @@ import (
 	"context"
 
 	"github.com/kelseyhightower/envconfig"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
 	"k8s.io/client-go/tools/cache"
+	"knative.dev/eventing/pkg/apis/eventing"
+	"knative.dev/pkg/injection"
+	pkgreconciler "knative.dev/pkg/reconciler"
+
+	pkgjetstream "knative.dev/eventing-natss/pkg/channel/jetstream"
 	"knative.dev/eventing-natss/pkg/channel/jetstream/utils"
 	clientinject "knative.dev/eventing-natss/pkg/client/injection/client"
 	jsminformer "knative.dev/eventing-natss/pkg/client/injection/informers/messaging/v1alpha1/natsjetstreamchannel"
 	"knative.dev/eventing-natss/pkg/common/configloader/fsloader"
-	"knative.dev/eventing/pkg/apis/eventing"
-	"knative.dev/pkg/injection"
-	pkgreconciler "knative.dev/pkg/reconciler"
 
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
@@ -38,14 +41,6 @@ import (
 	"knative.dev/eventing-natss/pkg/client/injection/reconciler/messaging/v1alpha1/natsjetstreamchannel"
 	"knative.dev/eventing-natss/pkg/common/constants"
 	commonnats "knative.dev/eventing-natss/pkg/common/nats"
-)
-
-const (
-	// controllerAgentName is the string used by this controller to identify
-	// itself when creating events.
-	controllerAgentName = "jetstream-ch-dispatcher"
-
-	finalizerName = controllerAgentName
 )
 
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
@@ -79,22 +74,21 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	conn, err := commonnats.NewNatsConn(ctx, natsConfig)
 
 	if err != nil {
-		logger.Fatalw("failed to establish nats connection", zap.Error(err))
+		logger.Fatalw("failed to establish NATS connection", zap.Error(err))
 	}
 
-	js, err := conn.JetStream()
+	js, err := jetstream.New(conn)
 	if err != nil {
 		// this shouldn't happen whilst no options are passed to conn.JetStream()
-		logger.Fatalw("failed to switch to JetStream context", zap.Error(err))
+		logger.Fatalw("failed to establish JetStream connection", zap.Error(err))
 	}
 
 	dispatcher, err := NewDispatcher(ctx, NatsDispatcherArgs{
-		JetStream:           js,
-		SubjectFunc:         utils.PublishSubjectName,
-		ConsumerNameFunc:    utils.ConsumerName,
-		ConsumerSubjectFunc: utils.ConsumerSubjectName,
-		PodName:             env.PodName,
-		ContainerName:       env.ContainerName,
+		JetStream:        js,
+		SubjectFunc:      utils.PublishSubjectName,
+		ConsumerNameFunc: utils.ConsumerName,
+		PodName:          env.PodName,
+		ContainerName:    env.ContainerName,
 	})
 	if err != nil {
 		logger.Fatalw("failed to create dispatcher", zap.Error(err))
@@ -108,7 +102,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		consumerNameFunc: dispatcher.consumerNameFunc,
 	}
 
-	impl := natsjetstreamchannel.NewImpl(ctx, r)
+	impl := natsjetstreamchannel.NewImpl(ctx, r, pkgjetstream.WithDispatcherFinalizer)
 
 	jsmInformer := jsminformer.Get(ctx)
 

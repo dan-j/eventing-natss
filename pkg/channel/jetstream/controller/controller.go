@@ -95,7 +95,7 @@ func NewController(ctx context.Context, _ configmap.Watcher) *controller.Impl {
 		controllerRef:            *ownerRef,
 	}
 
-	impl := jsmreconciler.NewImpl(ctx, r)
+	impl := jsmreconciler.NewImpl(ctx, r, jetstream.WithControllerFinalizer)
 
 	logger.Info("Setting up event handlers")
 	jsmInformer.Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))

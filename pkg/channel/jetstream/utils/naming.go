@@ -50,9 +50,3 @@ func PublishSubjectName(namespace, name string) string {
 func ConsumerName(subUID string) string {
 	return fmt.Sprintf("KN_SUB_%s", strings.ToUpper(uidReplacer.Replace(subUID)))
 }
-
-// ConsumerSubjectName generates a shareable subject name to bind to NATS Consumers for each Knative subscriber. This
-// can be used by multiple dispatcher replicas to share delivery of
-func ConsumerSubjectName(namespace, name, uid string) string {
-	return fmt.Sprintf("%s.%s._knative_consumer.%s", namespace, name, strings.ToLower(uidReplacer.Replace(uid)))
-}
